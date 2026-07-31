@@ -60,6 +60,47 @@ const NEXT_MONDAY = addDays(THIS_MONDAY, 7);
   document.addEventListener('click', ()=> dropdown.classList.remove('open'));
 })();
 
+/* ===== Install to home screen (PWA) =====
+   Chrome/Edge/Android show a native one-tap prompt via beforeinstallprompt.
+   iOS Safari never fires that event, so the button falls back to showing
+   the manual "Share → Add to Home Screen" steps instead. Either way, once
+   installed it opens full-screen from the home screen icon like a normal
+   app — no App Store/Play Store submission involved. */
+(function initInstallPrompt(){
+  const btn = document.getElementById('installBtn');
+  if(!btn) return;
+  let deferredPrompt = null;
+  const isStandalone = (window.matchMedia && matchMedia('(display-mode: standalone)').matches)
+                        || window.navigator.standalone === true;
+  const isIOS = /iP(hone|od|ad)/.test(navigator.userAgent);
+
+  window.addEventListener('beforeinstallprompt', (e)=>{
+    e.preventDefault();
+    deferredPrompt = e;
+  });
+  if(!isStandalone) btn.hidden = false;
+
+  btn.addEventListener('click', async ()=>{
+    if(deferredPrompt){
+      deferredPrompt.prompt();
+      try{ await deferredPrompt.userChoice; }catch(e){}
+      deferredPrompt = null;
+      btn.hidden = true;
+      return;
+    }
+    if(isIOS){
+      alert('To add this to your iPhone or iPad home screen:\n\n1. Open this page in Safari\n2. Tap the Share button (square with an arrow)\n3. Scroll down and tap "Add to Home Screen"\n4. Tap Add\n\nIt then opens full-screen from your home screen, just like an installed app.');
+    } else {
+      alert('To install this app:\n\n• Android (Chrome): menu (⋮) → "Add to Home screen" / "Install app"\n• Desktop Chrome or Edge: click the install icon in the address bar, or menu → "Install Family Meal Plan"\n• Mac Safari: File → Add to Dock\n\nAlready installed? Find it on your home screen or in your apps.');
+    }
+  });
+  window.addEventListener('appinstalled', ()=>{ btn.hidden = true; });
+
+  if('serviceWorker' in navigator){
+    navigator.serviceWorker.register('sw.js').catch(()=>{});
+  }
+})();
+
 /* ===== Storage: uses window.storage when previewed inside Claude,
    falls back to localStorage when opened/hosted as a normal page ===== */
 async function storageGet(key){
