@@ -97,7 +97,7 @@ async function loadBank(key, fallbackKey, defaults){
   }
   return defaults.slice();
 }
-async function saveBank(key, list){ await storageSet(key, JSON.stringify(list)); await touchUpdated(); }
+async function saveBank(key, list){ await storageSet(key, JSON.stringify(list)); await touchUpdated(key); }
 
 async function loadPlan(monday){
   const raw = await storageGet(weekKeyFor(monday));
@@ -117,7 +117,11 @@ async function loadPlan(monday){
   });
   return migrated;
 }
-async function savePlan(monday, plan){ await storageSet(weekKeyFor(monday), JSON.stringify(plan)); await touchUpdated(); }
+async function savePlan(monday, plan){
+  const key = weekKeyFor(monday);
+  await storageSet(key, JSON.stringify(plan));
+  await touchUpdated(key);
+}
 
 /* Currently-selected week, shared across Meal Plan and Board View pages */
 async function loadSelectedMonday(){
@@ -217,62 +221,89 @@ function initWeekSwitcher(selectedMonday, onChange){
 }
 
 /* =====================================================================
-   Google Drive auto-sync (optional)
+   Google Drive auto-sync — supports two people sharing one plan
    ---------------------------------------------------------------------
    One-time setup, done once by whoever owns the Google account this
    should sync to:
-     1. Google Cloud Console → APIs & Services → Credentials →
-        "Create Credentials" → OAuth client ID → Application type "Web
-        application". Add the URL(s) you host this site at (e.g. your
-        GitHub Pages URL) under "Authorized JavaScript origins".
-     2. In the same project, enable the "Google Drive API"
-        (APIs & Services → Library).
-     3. Paste the Client ID below.
+     1. Google Cloud Console → OAuth consent screen → add BOTH people's
+        Google emails as test users (Audience tab) — the app stays in
+        Testing mode, which requires no Google review, but only listed
+        test users can sign in.
+     2. Data access tab → add scope https://www.googleapis.com/auth/drive
+        (full Drive access — needed so a file shared with the second
+        person is actually visible to them; the narrower "drive.file"
+        scope only shows files an account created itself).
+     3. Enable the "Google Drive API" (APIs & Services → Library).
+     4. Create a Web application OAuth Client ID, add your hosting URL
+        under "Authorized JavaScript origins", and paste the Client ID
+        below.
    Until GSYNC_CLIENT_ID is filled in, the app just runs in local-only
    mode — everything else on the site works exactly the same.
 
-   Once configured: sign in ONE time via the button in the top bar. After
-   that, the browser's Google session is reused silently on every future
-   visit (prompt:"" below = no popup, no re-login) — edits auto-push to
-   Drive ~1.5s after you stop typing/clicking, and opening any page pulls
-   down anything newer that was saved from another device.
+   Once configured: person A signs in, edits normally, then clicks
+   "Share" in their user chip and enters person B's email — this grants
+   B edit access to the one Drive file behind the scenes. B then signs
+   in from their own device and sees the same plan.
+
+   Sync is per-key, not whole-file: each meal bank and each week's plan
+   carries its own timestamp, so if A edits Monday's lunch and B edits
+   Tuesday's dinner around the same time, both changes are kept. Only if
+   the exact same item is edited by both at nearly the same moment does
+   the later save win for that one item.
    ===================================================================== */
-const GSYNC_CLIENT_ID = "PASTE_YOUR_CLIENT_ID_HERE.apps.googleusercontent.com";
+const GSYNC_CLIENT_ID = "946510553805-8km4e31fnhmlom9ko57075n0ed38cdog.apps.googleusercontent.com";
 const GSYNC_FILE = "family-meal-plan-data.json";
-const GSYNC_SCOPES = "openid email profile https://www.googleapis.com/auth/drive.file";
+const GSYNC_SCOPES = "openid email profile https://www.googleapis.com/auth/drive";
 
 function gsyncConfigured(){ return GSYNC_CLIENT_ID.indexOf("PASTE_") !== 0; }
 
 let gUser = null, tokenClient = null, accessToken = null, tokenExp = 0,
     driveFileId = null, saveTimer = null, pendingPush = false, onRemoteRefreshed = null;
 
-async function touchUpdated(){
-  await storageSet('local-updated-at', String(Date.now()));
+/* Per-key timestamps so sync can merge instead of overwrite */
+async function getLocalTimestamps(){
+  const raw = await storageGet('key-timestamps');
+  if(!raw) return {};
+  try{ return JSON.parse(raw); }catch(e){ return {}; }
+}
+async function setLocalTimestamp(key, ts){
+  const map = await getLocalTimestamps();
+  map[key] = ts;
+  await storageSet('key-timestamps', JSON.stringify(map));
+}
+async function touchUpdated(key){
+  await setLocalTimestamp(key, Date.now());
   queuePush();
 }
+
 async function collectAllData(){
+  const ts = await getLocalTimestamps();
   const weekKeys = await storageList('week:');
-  const weeks = {};
-  for(const k of weekKeys){ const v = await storageGet(k); if(v!=null) weeks[k]=v; }
-  const updatedAt = parseInt((await storageGet('local-updated-at'))||'0', 10);
-  return {
-    updatedAt,
-    banks:{
-      lunch: await storageGet('meal-bank-lunch'),
-      dinner: await storageGet('meal-bank-dinner'),
-      prep: await storageGet('meal-bank-prep')
-    },
-    weeks
-  };
-}
-async function applyAllData(remote){
-  if(remote.banks){
-    if(remote.banks.lunch != null) await storageSet('meal-bank-lunch', remote.banks.lunch);
-    if(remote.banks.dinner != null) await storageSet('meal-bank-dinner', remote.banks.dinner);
-    if(remote.banks.prep != null) await storageSet('meal-bank-prep', remote.banks.prep);
+  const tracked = new Set(['meal-bank-lunch','meal-bank-dinner','meal-bank-prep', ...weekKeys]);
+  const keys = {};
+  for(const k of tracked){
+    const v = await storageGet(k);
+    if(v != null) keys[k] = { value: v, updatedAt: ts[k] || 0 };
   }
-  if(remote.weeks) for(const k in remote.weeks) await storageSet(k, remote.weeks[k]);
-  await storageSet('local-updated-at', String(remote.updatedAt || Date.now()));
+  return { keys };
+}
+/* Pulls in any remote key that's newer than the local copy of that same
+   key. Returns true if anything local changed (so the page can re-render). */
+async function mergeRemote(remote){
+  if(!remote || !remote.keys) return false;
+  const localTs = await getLocalTimestamps();
+  let changed = false;
+  for(const key in remote.keys){
+    const entry = remote.keys[key];
+    const lts = localTs[key] || 0;
+    if((entry.updatedAt||0) > lts){
+      await storageSet(key, entry.value);
+      localTs[key] = entry.updatedAt;
+      changed = true;
+    }
+  }
+  await storageSet('key-timestamps', JSON.stringify(localTs));
+  return changed;
 }
 
 function gsyncSetState(state, msg){
@@ -339,7 +370,7 @@ async function onToken(resp){
   accessToken = resp.access_token;
   tokenExp = Date.now() + ((resp.expires_in||3600)-60)*1000;
   if(google.accounts.oauth2.hasGrantedAllScopes &&
-     !google.accounts.oauth2.hasGrantedAllScopes(resp, 'https://www.googleapis.com/auth/drive.file')){
+     !google.accounts.oauth2.hasGrantedAllScopes(resp, 'https://www.googleapis.com/auth/drive')){
     gsyncSetState('err','Drive permission needed');
     return;
   }
@@ -372,19 +403,12 @@ async function driveSync(){
     await drivePush();
     return;
   }
-  const local = await collectAllData();
   const raw = await gfetch('https://www.googleapis.com/drive/v3/files/'+driveFileId+'?alt=media');
   let rem = null;
   try{ rem = (typeof raw === 'string') ? JSON.parse(raw) : raw; }catch(e){}
-  if(rem && (rem.updatedAt||0) > (local.updatedAt||0)){
-    await applyAllData(rem);
-    gsyncSetState('ok','Synced');
-    if(onRemoteRefreshed) await onRemoteRefreshed();
-  } else if((local.updatedAt||0) > ((rem && rem.updatedAt) || 0)){
-    await drivePush();
-  } else {
-    gsyncSetState('ok','Synced');
-  }
+  const changed = await mergeRemote(rem);
+  await drivePush(); // push the merged union back so Drive reflects both sides
+  if(changed && onRemoteRefreshed) await onRemoteRefreshed();
 }
 async function drivePush(){
   if(!gUser || !driveFileId) return;
@@ -410,6 +434,24 @@ function queuePush(){
   }, 1500);
 }
 
+async function shareWithEmail(email){
+  if(!gUser){ alert('Sign in first, then share.'); return; }
+  if(!driveFileId){
+    gsyncSetState('sync','Preparing…');
+    try{ await driveSync(); }catch(e){ gsyncFail(e); }
+  }
+  if(!driveFileId){ alert('Could not reach Drive yet — try again in a moment.'); return; }
+  try{
+    await gfetch('https://www.googleapis.com/drive/v3/files/'+driveFileId+'/permissions', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ role:'writer', type:'user', emailAddress: email })
+    });
+    alert(email + ' can now sign in on their own device and see/edit this same plan.');
+  }catch(e){
+    alert('Could not share this: ' + e.message);
+  }
+}
+
 function attemptSync(){
   if(!gUser || !gsyncConfigured()) return;
   if(typeof google === 'undefined' || !google.accounts){ loadGIS(); return; }
@@ -431,6 +473,7 @@ function initGoogleSync(onRefresh){
   onRemoteRefreshed = onRefresh;
   const signinBtn = document.getElementById('signinBtn');
   const signoutBtn = document.getElementById('signoutBtn');
+  const shareBtn = document.getElementById('shareBtn');
   if(!signinBtn) return; // this page has no auth UI
 
   try{
@@ -457,6 +500,13 @@ function initGoogleSync(onRefresh){
       localStorage.removeItem('gsync.user');
       gsyncRenderUser();
       gsyncSetState('off','Local only');
+    });
+  }
+  if(shareBtn){
+    shareBtn.addEventListener('click', async ()=>{
+      const email = prompt("Share this plan with (their Google email address):");
+      if(!email) return;
+      await shareWithEmail(email.trim());
     });
   }
 
