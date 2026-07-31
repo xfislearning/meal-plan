@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0E2233">
+<title>Family Meal Plan</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-in">
+    <a class="brand" href="index.html">Family Meal Plan<small>PREP · PLAN · REVIEW</small></a>
+    <div class="navlinks">
+      <a href="index.html" class="active">Home</a>
+      <a href="meal-menu.html">Meal Menu</a>
+      <a href="meal-plan.html">Meal Plan</a>
+      <a href="board-view.html">Board View</a>
+    </div>
+  </div>
+</div>
+
+<main>
+  <div class="hero">
+    <h1>Welcome back</h1>
+    <p>Plan the weekend prep, set the week's lunches &amp; dinners, then check the board at a glance.</p>
+  </div>
+
+  <div class="launch-grid">
+    <a class="launch" href="meal-menu.html">
+      <div class="glyph">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
+      </div>
+      <h2>Meal Menu</h2>
+      <p>Your go-to prep, lunch and dinner ideas — add, remove, and pick what to plan.</p>
+      <div class="stat" id="statMenu">…</div>
+    </a>
+
+    <a class="launch" href="meal-plan.html">
+      <div class="glyph">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+      </div>
+      <h2>Meal Plan</h2>
+      <p>Weekend meal prep, then lunch &amp; dinner for every weekday.</p>
+      <div class="stat" id="statPlan">…</div>
+    </a>
+
+    <a class="launch" href="board-view.html">
+      <div class="glyph">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="3" width="7" height="7" rx="1"></rect><rect x="3" y="14" width="7" height="7" rx="1"></rect><rect x="14" y="14" width="7" height="7" rx="1"></rect></svg>
+      </div>
+      <h2>Board View</h2>
+      <p>A read-only snapshot of the whole week — good for the fridge or a shared screen.</p>
+      <div class="stat" id="statBoard">…</div>
+    </a>
+  </div>
+</main>
+<footer class="page-foot">Family Meal Plan · saved privately in this browser</footer>
+
+<script src="common.js"></script>
+<script>
+async function init(){
+  const [lunchBank, dinnerBank, prepBank] = await Promise.all([
+    loadBank('meal-bank-lunch', 'meal-bank', DEFAULT_LUNCH),
+    loadBank('meal-bank-dinner', null, DEFAULT_DINNER),
+    loadBank('meal-bank-prep', null, DEFAULT_PREP)
+  ]);
+  document.getElementById('statMenu').textContent =
+    `${lunchBank.length + dinnerBank.length + prepBank.length} ideas saved`;
+
+  const selectedMonday = await loadSelectedMonday();
+  const plan = await loadPlan(selectedMonday);
+  const plannedDays = WEEKDAYS.filter(d => plan[d] && (plan[d].lunch || plan[d].dinner)).length;
+  document.getElementById('statPlan').textContent =
+    `${plannedDays}/5 weekdays planned · week of ${fmtShort(selectedMonday)}`;
+  document.getElementById('statBoard').textContent =
+    `Showing week of ${fmtShort(selectedMonday)}`;
+}
+init();
+</script>
+</body>
+</html>

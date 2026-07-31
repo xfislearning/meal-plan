@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0E2233">
+<title>Meal Menu · Family Meal Plan</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-in">
+    <a class="brand" href="meal-plan.html">Family Meal Plan<small>PREP · PLAN · REVIEW</small></a>
+    <div class="navlinks">
+      <a href="index.html">Home</a>
+      <a href="meal-menu.html" class="active">Meal Menu</a>
+      <a href="meal-plan.html">Meal Plan</a>
+      <a href="board-view.html">Board View</a>
+    </div>
+  </div>
+</div>
+
+<main>
+  <div class="viewhead">
+    <div>
+      <h1>Meal Menu</h1>
+      <p>Tap an item to select it, then head to Meal Plan and tap where it goes.</p>
+    </div>
+  </div>
+
+  <div class="formcard">
+    <h2>🧺 Meal prep ideas</h2>
+    <div class="sub">Big-batch cooking and prep tasks for the weekend.</div>
+    <div class="chips" id="prepBankEl"></div>
+    <div class="add-row">
+      <input type="text" id="newPrepInput" placeholder="Add a prep idea…">
+      <button class="btn" id="addPrepBtn">Add</button>
+    </div>
+  </div>
+
+  <div class="formcard">
+    <h2>☀️ Lunch ideas</h2>
+    <div class="sub">Quick weekday lunches.</div>
+    <div class="chips" id="lunchBankEl"></div>
+    <div class="add-row">
+      <input type="text" id="newLunchInput" placeholder="Add a lunch idea…">
+      <button class="btn" id="addLunchBtn">Add</button>
+    </div>
+  </div>
+
+  <div class="formcard">
+    <h2>🌙 Dinner ideas</h2>
+    <div class="sub">Weeknight dinners.</div>
+    <div class="chips" id="dinnerBankEl"></div>
+    <div class="add-row">
+      <input type="text" id="newDinnerInput" placeholder="Add a dinner idea…">
+      <button class="btn" id="addDinnerBtn">Add</button>
+    </div>
+  </div>
+</main>
+<footer class="page-foot">Family Meal Plan · saved privately in this browser</footer>
+
+<script src="common.js"></script>
+<script>
+let activeMeal = null;
+let lunchBank = [], dinnerBank = [], prepBank = [];
+
+function renderBankSection(containerId, list, saveKey){
+  const wrap = document.getElementById(containerId);
+  wrap.innerHTML = '';
+  if(list.length === 0){
+    wrap.innerHTML = `<span style="color:var(--muted);font-size:13px;">No items yet — add one below.</span>`;
+  }
+  list.forEach(meal=>{
+    const chip = document.createElement('div');
+    chip.className = 'chip selectable' + (activeMeal===meal ? ' active':'');
+    chip.innerHTML = `<span class="icon">${iconFor(meal)}</span><span>${escapeHtml(meal)}</span>`;
+    const rm = document.createElement('button');
+    rm.textContent = '✕';
+    rm.title = 'Remove from list';
+    rm.onclick = async (e)=>{
+      e.stopPropagation();
+      const idx = list.indexOf(meal);
+      if(idx>-1) list.splice(idx,1);
+      if(activeMeal===meal){ activeMeal=null; await saveActiveMeal(null); }
+      await saveBank(saveKey, list);
+      renderAll();
+    };
+    chip.appendChild(rm);
+    chip.addEventListener('click', async (e)=>{
+      if(e.target.tagName==='BUTTON') return;
+      if(activeMeal === meal){
+        activeMeal = null;
+        await saveActiveMeal(null);
+        renderAll();
+      } else {
+        activeMeal = meal;
+        await saveActiveMeal(meal);
+        window.location.href = 'meal-plan.html';
+      }
+    });
+    wrap.appendChild(chip);
+  });
+}
+function renderAll(){
+  renderBankSection('prepBankEl', prepBank, 'meal-bank-prep');
+  renderBankSection('lunchBankEl', lunchBank, 'meal-bank-lunch');
+  renderBankSection('dinnerBankEl', dinnerBank, 'meal-bank-dinner');
+}
+function wireAdd(btnId, inputId, list, saveKey){
+  document.getElementById(btnId).onclick = async ()=>{
+    const input = document.getElementById(inputId);
+    const val = input.value.trim();
+    if(!val) return;
+    if(!list.includes(val)) list.push(val);
+    input.value = '';
+    await saveBank(saveKey, list);
+    renderAll();
+  };
+  document.getElementById(inputId).addEventListener('keydown', e=>{
+    if(e.key==='Enter') document.getElementById(btnId).click();
+  });
+}
+
+async function init(){
+  lunchBank = await loadBank('meal-bank-lunch', 'meal-bank', DEFAULT_LUNCH);
+  dinnerBank = await loadBank('meal-bank-dinner', null, DEFAULT_DINNER);
+  prepBank = await loadBank('meal-bank-prep', null, DEFAULT_PREP);
+  activeMeal = await loadActiveMeal();
+  renderAll();
+  wireAdd('addPrepBtn','newPrepInput', prepBank, 'meal-bank-prep');
+  wireAdd('addLunchBtn','newLunchInput', lunchBank, 'meal-bank-lunch');
+  wireAdd('addDinnerBtn','newDinnerInput', dinnerBank, 'meal-bank-dinner');
+}
+init();
+</script>
+</body>
+</html>

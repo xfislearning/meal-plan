@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0E2233">
+<title>Board View · Family Meal Plan</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-in">
+    <a class="brand" href="meal-plan.html">Family Meal Plan<small>PREP · PLAN · REVIEW</small></a>
+    <div class="navlinks">
+      <a href="index.html">Home</a>
+      <a href="meal-menu.html">Meal Menu</a>
+      <a href="meal-plan.html">Meal Plan</a>
+      <a href="board-view.html" class="active">Board View</a>
+    </div>
+  </div>
+</div>
+
+<main>
+  <div class="viewhead">
+    <div>
+      <h1>Board View</h1>
+      <p>Here's what's on the plan for the week — tap ✕ to remove something.</p>
+    </div>
+    <div class="pnav">
+      <button id="prevWeek" title="Previous week">‹</button>
+      <button class="plabel" id="weekLabelBtn">📅 <span id="weekLabelText">Week of …</span><span class="wk-tag" id="weekTag" style="display:none;"></span></button>
+      <button id="nextWeek" title="Next week">›</button>
+      <div class="calendar-popover" id="calendarPopover">
+        <div class="quick-row">
+          <button class="quick-btn" id="quickThis">This week</button>
+          <button class="quick-btn" id="quickNext">Next week</button>
+        </div>
+        <div class="cal-header">
+          <button id="calPrevMonth">‹</button>
+          <span id="calMonthLabel"></span>
+          <button id="calNextMonth">›</button>
+        </div>
+        <div class="cal-grid" id="calGrid"></div>
+      </div>
+    </div>
+  </div>
+
+  <h2 class="section-title">🧺 Weekend Meal Prep <span class="tag">Sat &amp; Sun</span></h2>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th style="width:150px;">Day</th><th>Meal Prep</th></tr></thead>
+      <tbody id="weekendBody"></tbody>
+    </table>
+  </div>
+
+  <h2 class="section-title">📅 Week Day Meal Plan <span class="tag">Mon–Fri</span></h2>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th style="width:150px;">Day</th><th>Lunch</th><th>Dinner</th></tr></thead>
+      <tbody id="weekdayBody"></tbody>
+    </table>
+  </div>
+</main>
+<footer class="page-foot">Family Meal Plan · saved privately in this browser</footer>
+
+<script src="common.js"></script>
+<script>
+let selectedMonday, plan = {};
+
+function renderWeekendTable(){
+  const tbody = document.getElementById('weekendBody');
+  tbody.innerHTML = '';
+  WEEKEND_DAYS.forEach(day=>{
+    const idx = ALL_DAYS.indexOf(day);
+    const date = addDays(selectedMonday, idx);
+    const entry = plan[day] || {prep:[]};
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="day-cell"><b>${day}</b><small>${fmtShort(date)}</small></td>
+      <td class="slot-cell prep-cell" data-day="${day}">${prepCellHtml(entry.prep, 'no prep planned')}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+function renderWeekdayTable(){
+  const tbody = document.getElementById('weekdayBody');
+  tbody.innerHTML = '';
+  WEEKDAYS.forEach(day=>{
+    const idx = ALL_DAYS.indexOf(day);
+    const date = addDays(selectedMonday, idx);
+    const entry = plan[day] || {lunch:'', dinner:''};
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="day-cell"><b>${day}</b><small>${fmtShort(date)}</small></td>
+      <td class="slot-cell" data-day="${day}" data-type="lunch">${slotCellHtml(entry.lunch, 'not planned')}</td>
+      <td class="slot-cell" data-day="${day}" data-type="dinner">${slotCellHtml(entry.dinner, 'not planned')}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+document.getElementById('weekendBody').addEventListener('click', async (e)=>{
+  const xBtn = e.target.closest('.slot-x');
+  if(!xBtn) return;
+  const cell = e.target.closest('.slot-cell');
+  const day = cell.getAttribute('data-day');
+  const i = parseInt(xBtn.getAttribute('data-idx'),10);
+  plan[day] = plan[day] || {prep:[]};
+  plan[day].prep.splice(i,1);
+  await savePlan(selectedMonday, plan);
+  renderWeekendTable();
+});
+document.getElementById('weekdayBody').addEventListener('click', async (e)=>{
+  const xBtn = e.target.closest('.slot-x');
+  if(!xBtn) return;
+  const cell = e.target.closest('.slot-cell');
+  const day = cell.getAttribute('data-day');
+  const type = cell.getAttribute('data-type');
+  plan[day] = plan[day] || {lunch:'', dinner:''};
+  plan[day][type] = '';
+  await savePlan(selectedMonday, plan);
+  renderWeekdayTable();
+});
+
+async function init(){
+  selectedMonday = await loadSelectedMonday();
+  plan = await loadPlan(selectedMonday);
+  renderWeekendTable();
+  renderWeekdayTable();
+
+  initWeekSwitcher(selectedMonday, async (newMonday)=>{
+    selectedMonday = newMonday;
+    plan = await loadPlan(selectedMonday);
+    renderWeekendTable();
+    renderWeekdayTable();
+  });
+}
+init();
+</script>
+</body>
+</html>
