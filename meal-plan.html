@@ -15,11 +15,25 @@
 <div class="topbar">
   <div class="topbar-in">
     <a class="brand" href="meal-plan.html">Family Meal Plan<small>PREP · PLAN · REVIEW</small></a>
-    <div class="navlinks">
+    <button class="nav-toggle" id="navToggle" aria-label="Menu">☰</button>
+    <div class="nav-dropdown" id="navDropdown">
+      <div class="navlinks">
       <a href="index.html">Home</a>
       <a href="meal-menu.html">Meal Menu</a>
       <a href="meal-plan.html" class="active">Meal Plan</a>
       <a href="board-view.html">Board View</a>
+      </div>
+      <div class="nav-auth">
+        <button class="icon-btn" id="signinBtn">Sign in with Google</button>
+        <div class="userchip" id="userChip" hidden>
+          <img id="userPic" src="" alt="">
+          <div class="uc-txt">
+            <b id="userName"></b>
+            <span id="syncState" data-state="off">Local only</span>
+          </div>
+          <button id="signoutBtn" title="Sign out">Sign out</button>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -49,13 +63,7 @@
     </div>
   </div>
 
-  <div class="banner">
-    <div>
-      <b>Selection</b>
-      <span id="bannerText" class="empty">Nothing selected — go to Meal Menu to choose what to plan</span>
-    </div>
-    <a class="btn secondary" href="meal-menu.html">Meal Menu</a>
-  </div>
+  <p class="board-sub">Tap any cell to search and pick a meal — tap it again to change it.</p>
 
   <h2 class="section-title">🧺 Weekend Meal Prep <span class="tag">Sat &amp; Sun</span></h2>
   <div class="tbl-wrap">
@@ -73,6 +81,14 @@
     </table>
   </div>
 
+  <div class="meal-picker" id="mealPicker">
+    <div class="mp-head">
+      <input type="text" id="mpSearch" placeholder="Search ideas…">
+      <button id="mpClose" title="Close">✕</button>
+    </div>
+    <div class="mp-list" id="mpList"></div>
+  </div>
+
   <div class="toolbar">
     <button class="btn secondary" id="copyPrevWeek">Copy previous week</button>
     <button class="btn danger" id="clearWeek">Clear this week</button>
@@ -83,18 +99,12 @@
 
 <script src="common.js"></script>
 <script>
-let selectedMonday, plan = {}, activeMeal = null;
+let selectedMonday, plan = {};
+let lunchBank = [], dinnerBank = [], prepBank = [];
+let pickerCtx = null; // { type: 'lunch'|'dinner'|'prep', day }
 
-function renderBanner(){
-  const el = document.getElementById('bannerText');
-  if(activeMeal){
-    el.textContent = `${iconFor(activeMeal)} ${activeMeal} — tap a cell to place it`;
-    el.classList.remove('empty');
-  } else {
-    el.textContent = 'Nothing selected — go to Meal Menu to choose what to plan';
-    el.classList.add('empty');
-  }
-}
+function bankFor(type){ return type==='lunch' ? lunchBank : type==='dinner' ? dinnerBank : prepBank; }
+function bankKeyFor(type){ return type==='lunch' ? 'meal-bank-lunch' : type==='dinner' ? 'meal-bank-dinner' : 'meal-bank-prep'; }
 
 function renderWeekendTable(){
   const tbody = document.getElementById('weekendBody');
@@ -106,7 +116,7 @@ function renderWeekendTable(){
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td class="day-cell"><b>${FULL_DAY[day]}</b><small>${fmtShort(date)}</small></td>
-      <td class="slot-cell prep-cell${activeMeal?' fillable':''}" data-day="${day}">${prepCellHtml(entry.prep)}</td>
+      <td class="slot-cell prep-cell fillable" data-day="${day}" data-type="prep">${prepCellHtml(entry.prep)}</td>
     `;
     tbody.appendChild(tr);
   });
@@ -121,8 +131,8 @@ function renderWeekdayTable(){
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td class="day-cell"><b>${FULL_DAY[day]}</b><small>${fmtShort(date)}</small></td>
-      <td class="slot-cell${activeMeal?' fillable':''}" data-day="${day}" data-type="lunch">${slotCellHtml(entry.lunch)}</td>
-      <td class="slot-cell${activeMeal?' fillable':''}" data-day="${day}" data-type="dinner">${slotCellHtml(entry.dinner)}</td>
+      <td class="slot-cell fillable" data-day="${day}" data-type="lunch">${slotCellHtml(entry.lunch)}</td>
+      <td class="slot-cell fillable" data-day="${day}" data-type="dinner">${slotCellHtml(entry.dinner)}</td>
     `;
     tbody.appendChild(tr);
   });
@@ -133,24 +143,101 @@ function setStatus(msg){
   if(msg) setTimeout(()=>{ if(el.textContent===msg) el.textContent=''; }, 2000);
 }
 
+/* ===== In-cell search picker ===== */
+function openPicker(anchorEl, type, day){
+  pickerCtx = { type, day };
+  const search = document.getElementById('mpSearch');
+  search.value = '';
+  renderPickerList('');
+  const picker = document.getElementById('mealPicker');
+  picker.classList.add('open');
+  positionPicker(picker, anchorEl);
+  search.focus();
+}
+function closePicker(){
+  document.getElementById('mealPicker').classList.remove('open');
+  pickerCtx = null;
+}
+function positionPicker(picker, anchorEl){
+  const r = anchorEl.getBoundingClientRect();
+  const width = Math.min(280, window.innerWidth - 20);
+  picker.style.width = width + 'px';
+  let left = window.scrollX + r.left;
+  const maxLeft = window.scrollX + document.documentElement.clientWidth - width - 10;
+  if(left > maxLeft) left = Math.max(10, maxLeft);
+  picker.style.left = left + 'px';
+  picker.style.top = (window.scrollY + r.bottom + 6) + 'px';
+}
+function renderPickerList(query){
+  if(!pickerCtx) return;
+  const list = bankFor(pickerCtx.type);
+  const q = query.trim().toLowerCase();
+  const filtered = q ? list.filter(m => m.toLowerCase().includes(q)) : list;
+  const wrap = document.getElementById('mpList');
+  wrap.innerHTML = '';
+  filtered.forEach(meal=>{
+    const btn = document.createElement('button');
+    btn.className = 'mp-item';
+    btn.innerHTML = `<span class="icon">${iconFor(meal)}</span><span>${escapeHtml(meal)}</span>`;
+    btn.onclick = ()=> pickMeal(meal, false);
+    wrap.appendChild(btn);
+  });
+  const query2 = query.trim();
+  if(query2 && !list.some(m => m.toLowerCase() === q)){
+    const addBtn = document.createElement('button');
+    addBtn.className = 'mp-item mp-add';
+    addBtn.innerHTML = `<span class="icon">＋</span><span>Add "${escapeHtml(query2)}"</span>`;
+    addBtn.onclick = ()=> pickMeal(query2, true);
+    wrap.appendChild(addBtn);
+  }
+  if(filtered.length === 0 && !query2){
+    wrap.innerHTML = `<div class="mp-empty">No ideas yet — type above to add one.</div>`;
+  }
+}
+async function pickMeal(meal, isNew){
+  const { type, day } = pickerCtx;
+  if(isNew){
+    const list = bankFor(type);
+    if(!list.includes(meal)) list.push(meal);
+    await saveBank(bankKeyFor(type), list);
+  }
+  if(type === 'prep'){
+    plan[day] = plan[day] || {prep:[]};
+    if(!plan[day].prep.includes(meal)) plan[day].prep.push(meal);
+    await savePlan(selectedMonday, plan);
+    renderWeekendTable();
+    renderPickerList(document.getElementById('mpSearch').value);
+    document.getElementById('mpSearch').focus();
+  } else {
+    plan[day] = plan[day] || {lunch:'', dinner:''};
+    plan[day][type] = meal;
+    await savePlan(selectedMonday, plan);
+    renderWeekdayTable();
+    closePicker();
+  }
+}
+
+document.getElementById('mpSearch').addEventListener('input', e => renderPickerList(e.target.value));
+document.getElementById('mpSearch').addEventListener('keydown', e => { if(e.key === 'Escape') closePicker(); });
+document.getElementById('mpClose').onclick = closePicker;
+document.getElementById('mealPicker').addEventListener('click', e => e.stopPropagation());
+document.addEventListener('click', closePicker);
+
 document.getElementById('weekendBody').addEventListener('click', async (e)=>{
   const cell = e.target.closest('.slot-cell');
   if(!cell) return;
   const day = cell.getAttribute('data-day');
-  plan[day] = plan[day] || {prep:[]};
   const xBtn = e.target.closest('.slot-x');
   if(xBtn){
     const i = parseInt(xBtn.getAttribute('data-idx'),10);
+    plan[day] = plan[day] || {prep:[]};
     plan[day].prep.splice(i,1);
     await savePlan(selectedMonday, plan);
     renderWeekendTable();
     return;
   }
-  if(activeMeal){
-    if(!plan[day].prep.includes(activeMeal)) plan[day].prep.push(activeMeal);
-    await savePlan(selectedMonday, plan);
-    renderWeekendTable();
-  }
+  e.stopPropagation();
+  openPicker(cell, 'prep', day);
 });
 
 document.getElementById('weekdayBody').addEventListener('click', async (e)=>{
@@ -158,29 +245,30 @@ document.getElementById('weekdayBody').addEventListener('click', async (e)=>{
   if(!cell) return;
   const day = cell.getAttribute('data-day');
   const type = cell.getAttribute('data-type');
-  plan[day] = plan[day] || {lunch:'', dinner:''};
   const xBtn = e.target.closest('.slot-x');
   if(xBtn){
+    plan[day] = plan[day] || {lunch:'', dinner:''};
     plan[day][type] = '';
     await savePlan(selectedMonday, plan);
     renderWeekdayTable();
     return;
   }
-  if(activeMeal){
-    plan[day][type] = activeMeal;
-    await savePlan(selectedMonday, plan);
-    renderWeekdayTable();
-  }
+  e.stopPropagation();
+  openPicker(cell, type, day);
 });
+
+async function loadAndRender(){
+  plan = await loadPlan(selectedMonday);
+  lunchBank = await loadBank('meal-bank-lunch', 'meal-bank', DEFAULT_LUNCH);
+  dinnerBank = await loadBank('meal-bank-dinner', null, DEFAULT_DINNER);
+  prepBank = await loadBank('meal-bank-prep', null, DEFAULT_PREP);
+  renderWeekendTable();
+  renderWeekdayTable();
+}
 
 async function init(){
   selectedMonday = await loadSelectedMonday();
-  plan = await loadPlan(selectedMonday);
-  activeMeal = await loadActiveMeal();
-
-  renderBanner();
-  renderWeekendTable();
-  renderWeekdayTable();
+  await loadAndRender();
 
   initWeekSwitcher(selectedMonday, async (newMonday)=>{
     selectedMonday = newMonday;
@@ -203,6 +291,8 @@ async function init(){
     renderWeekendTable(); renderWeekdayTable();
     setStatus('Week cleared');
   };
+
+  initGoogleSync(loadAndRender);
 }
 init();
 </script>

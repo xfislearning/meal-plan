@@ -15,11 +15,25 @@
 <div class="topbar">
   <div class="topbar-in">
     <a class="brand" href="meal-plan.html">Family Meal Plan<small>PREP · PLAN · REVIEW</small></a>
-    <div class="navlinks">
+    <button class="nav-toggle" id="navToggle" aria-label="Menu">☰</button>
+    <div class="nav-dropdown" id="navDropdown">
+      <div class="navlinks">
       <a href="index.html">Home</a>
       <a href="meal-menu.html" class="active">Meal Menu</a>
       <a href="meal-plan.html">Meal Plan</a>
       <a href="board-view.html">Board View</a>
+      </div>
+      <div class="nav-auth">
+        <button class="icon-btn" id="signinBtn">Sign in with Google</button>
+        <div class="userchip" id="userChip" hidden>
+          <img id="userPic" src="" alt="">
+          <div class="uc-txt">
+            <b id="userName"></b>
+            <span id="syncState" data-state="off">Local only</span>
+          </div>
+          <button id="signoutBtn" title="Sign out">Sign out</button>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -66,7 +80,6 @@
 
 <script src="common.js"></script>
 <script>
-let activeMeal = null;
 let lunchBank = [], dinnerBank = [], prepBank = [];
 
 function renderBankSection(containerId, list, saveKey){
@@ -77,32 +90,18 @@ function renderBankSection(containerId, list, saveKey){
   }
   list.forEach(meal=>{
     const chip = document.createElement('div');
-    chip.className = 'chip selectable' + (activeMeal===meal ? ' active':'');
+    chip.className = 'chip';
     chip.innerHTML = `<span class="icon">${iconFor(meal)}</span><span>${escapeHtml(meal)}</span>`;
     const rm = document.createElement('button');
     rm.textContent = '✕';
     rm.title = 'Remove from list';
-    rm.onclick = async (e)=>{
-      e.stopPropagation();
+    rm.onclick = async ()=>{
       const idx = list.indexOf(meal);
       if(idx>-1) list.splice(idx,1);
-      if(activeMeal===meal){ activeMeal=null; await saveActiveMeal(null); }
       await saveBank(saveKey, list);
       renderAll();
     };
     chip.appendChild(rm);
-    chip.addEventListener('click', async (e)=>{
-      if(e.target.tagName==='BUTTON') return;
-      if(activeMeal === meal){
-        activeMeal = null;
-        await saveActiveMeal(null);
-        renderAll();
-      } else {
-        activeMeal = meal;
-        await saveActiveMeal(meal);
-        window.location.href = 'meal-plan.html';
-      }
-    });
     wrap.appendChild(chip);
   });
 }
@@ -111,14 +110,20 @@ function renderAll(){
   renderBankSection('lunchBankEl', lunchBank, 'meal-bank-lunch');
   renderBankSection('dinnerBankEl', dinnerBank, 'meal-bank-dinner');
 }
-function wireAdd(btnId, inputId, list, saveKey){
+function wireAdd(bankName, btnId, inputId){
+  const getSet = {
+    prep:   { get: ()=>prepBank,   set: v=>{prepBank=v;},   key:'meal-bank-prep' },
+    lunch:  { get: ()=>lunchBank,  set: v=>{lunchBank=v;},  key:'meal-bank-lunch' },
+    dinner: { get: ()=>dinnerBank, set: v=>{dinnerBank=v;}, key:'meal-bank-dinner' }
+  }[bankName];
   document.getElementById(btnId).onclick = async ()=>{
     const input = document.getElementById(inputId);
     const val = input.value.trim();
     if(!val) return;
+    const list = getSet.get();
     if(!list.includes(val)) list.push(val);
     input.value = '';
-    await saveBank(saveKey, list);
+    await saveBank(getSet.key, list);
     renderAll();
   };
   document.getElementById(inputId).addEventListener('keydown', e=>{
@@ -126,15 +131,18 @@ function wireAdd(btnId, inputId, list, saveKey){
   });
 }
 
-async function init(){
+async function loadAndRender(){
   lunchBank = await loadBank('meal-bank-lunch', 'meal-bank', DEFAULT_LUNCH);
   dinnerBank = await loadBank('meal-bank-dinner', null, DEFAULT_DINNER);
   prepBank = await loadBank('meal-bank-prep', null, DEFAULT_PREP);
-  activeMeal = await loadActiveMeal();
   renderAll();
-  wireAdd('addPrepBtn','newPrepInput', prepBank, 'meal-bank-prep');
-  wireAdd('addLunchBtn','newLunchInput', lunchBank, 'meal-bank-lunch');
-  wireAdd('addDinnerBtn','newDinnerInput', dinnerBank, 'meal-bank-dinner');
+}
+async function init(){
+  await loadAndRender();
+  wireAdd('prep','addPrepBtn','newPrepInput');
+  wireAdd('lunch','addLunchBtn','newLunchInput');
+  wireAdd('dinner','addDinnerBtn','newDinnerInput');
+  initGoogleSync(loadAndRender);
 }
 init();
 </script>

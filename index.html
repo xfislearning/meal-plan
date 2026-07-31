@@ -15,11 +15,25 @@
 <div class="topbar">
   <div class="topbar-in">
     <a class="brand" href="index.html">Family Meal Plan<small>PREP · PLAN · REVIEW</small></a>
-    <div class="navlinks">
+    <button class="nav-toggle" id="navToggle" aria-label="Menu">☰</button>
+    <div class="nav-dropdown" id="navDropdown">
+      <div class="navlinks">
       <a href="index.html" class="active">Home</a>
       <a href="meal-menu.html">Meal Menu</a>
       <a href="meal-plan.html">Meal Plan</a>
       <a href="board-view.html">Board View</a>
+      </div>
+      <div class="nav-auth">
+        <button class="icon-btn" id="signinBtn">Sign in with Google</button>
+        <div class="userchip" id="userChip" hidden>
+          <img id="userPic" src="" alt="">
+          <div class="uc-txt">
+            <b id="userName"></b>
+            <span id="syncState" data-state="off">Local only</span>
+          </div>
+          <button id="signoutBtn" title="Sign out">Sign out</button>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -63,7 +77,7 @@
 
 <script src="common.js"></script>
 <script>
-async function init(){
+async function loadAndRender(){
   const [lunchBank, dinnerBank, prepBank] = await Promise.all([
     loadBank('meal-bank-lunch', 'meal-bank', DEFAULT_LUNCH),
     loadBank('meal-bank-dinner', null, DEFAULT_DINNER),
@@ -79,6 +93,10 @@ async function init(){
     `${plannedDays}/5 weekdays planned · week of ${fmtShort(selectedMonday)}`;
   document.getElementById('statBoard').textContent =
     `Showing week of ${fmtShort(selectedMonday)}`;
+}
+async function init(){
+  await loadAndRender();
+  initGoogleSync(loadAndRender);
 }
 init();
 </script>

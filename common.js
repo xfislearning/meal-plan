@@ -47,6 +47,19 @@ const TODAY = new Date(); TODAY.setHours(0,0,0,0);
 const THIS_MONDAY = getMonday(TODAY);
 const NEXT_MONDAY = addDays(THIS_MONDAY, 7);
 
+/* ===== Mobile nav dropdown (top-right hamburger) ===== */
+(function initNavToggle(){
+  const toggle = document.getElementById('navToggle');
+  const dropdown = document.getElementById('navDropdown');
+  if(!toggle || !dropdown) return;
+  toggle.addEventListener('click', (e)=>{
+    e.stopPropagation();
+    dropdown.classList.toggle('open');
+  });
+  dropdown.addEventListener('click', e=> e.stopPropagation());
+  document.addEventListener('click', ()=> dropdown.classList.remove('open'));
+})();
+
 /* ===== Storage: uses window.storage when previewed inside Claude,
    falls back to localStorage when opened/hosted as a normal page ===== */
 async function storageGet(key){
@@ -62,6 +75,14 @@ async function storageSet(key, value){
   }
   try{ localStorage.setItem(key, value); return true; }catch(e){ return false; }
 }
+async function storageList(prefix){
+  if(window.storage){
+    try{ const r = await window.storage.list(prefix); return (r && r.keys) ? r.keys : []; }
+    catch(e){ return []; }
+  }
+  try{ return Object.keys(localStorage).filter(k => !prefix || k.startsWith(prefix)); }
+  catch(e){ return []; }
+}
 
 /* ===== Data helpers ===== */
 function weekKeyFor(monday){ return 'week:' + fmtISO(monday); }
@@ -76,7 +97,7 @@ async function loadBank(key, fallbackKey, defaults){
   }
   return defaults.slice();
 }
-async function saveBank(key, list){ await storageSet(key, JSON.stringify(list)); }
+async function saveBank(key, list){ await storageSet(key, JSON.stringify(list)); await touchUpdated(); }
 
 async function loadPlan(monday){
   const raw = await storageGet(weekKeyFor(monday));
@@ -96,7 +117,7 @@ async function loadPlan(monday){
   });
   return migrated;
 }
-async function savePlan(monday, plan){ await storageSet(weekKeyFor(monday), JSON.stringify(plan)); }
+async function savePlan(monday, plan){ await storageSet(weekKeyFor(monday), JSON.stringify(plan)); await touchUpdated(); }
 
 /* Currently-selected week, shared across Meal Plan and Board View pages */
 async function loadSelectedMonday(){
@@ -108,14 +129,6 @@ async function loadSelectedMonday(){
   return NEXT_MONDAY; // default: plan for next week
 }
 async function saveSelectedMonday(monday){ await storageSet('selected-monday', fmtISO(monday)); }
-
-/* Currently "picked up" meal, shared across pages so a selection made on
-   Meal Menu survives navigating to Meal Plan */
-async function loadActiveMeal(){ return await storageGet('active-selection'); }
-async function saveActiveMeal(meal){
-  if(meal) await storageSet('active-selection', meal);
-  else await storageSet('active-selection', '');
-}
 
 /* ===== Shared cell renderers (Meal Plan + Board View) ===== */
 function slotCellHtml(meal, emptyText){
@@ -201,4 +214,252 @@ function initWeekSwitcher(selectedMonday, onChange){
   renderLabel();
 
   return { getSelectedMonday: ()=> selectedMonday };
+}
+
+/* =====================================================================
+   Google Drive auto-sync (optional)
+   ---------------------------------------------------------------------
+   One-time setup, done once by whoever owns the Google account this
+   should sync to:
+     1. Google Cloud Console → APIs & Services → Credentials →
+        "Create Credentials" → OAuth client ID → Application type "Web
+        application". Add the URL(s) you host this site at (e.g. your
+        GitHub Pages URL) under "Authorized JavaScript origins".
+     2. In the same project, enable the "Google Drive API"
+        (APIs & Services → Library).
+     3. Paste the Client ID below.
+   Until GSYNC_CLIENT_ID is filled in, the app just runs in local-only
+   mode — everything else on the site works exactly the same.
+
+   Once configured: sign in ONE time via the button in the top bar. After
+   that, the browser's Google session is reused silently on every future
+   visit (prompt:"" below = no popup, no re-login) — edits auto-push to
+   Drive ~1.5s after you stop typing/clicking, and opening any page pulls
+   down anything newer that was saved from another device.
+   ===================================================================== */
+const GSYNC_CLIENT_ID = "PASTE_YOUR_CLIENT_ID_HERE.apps.googleusercontent.com";
+const GSYNC_FILE = "family-meal-plan-data.json";
+const GSYNC_SCOPES = "openid email profile https://www.googleapis.com/auth/drive.file";
+
+function gsyncConfigured(){ return GSYNC_CLIENT_ID.indexOf("PASTE_") !== 0; }
+
+let gUser = null, tokenClient = null, accessToken = null, tokenExp = 0,
+    driveFileId = null, saveTimer = null, pendingPush = false, onRemoteRefreshed = null;
+
+async function touchUpdated(){
+  await storageSet('local-updated-at', String(Date.now()));
+  queuePush();
+}
+async function collectAllData(){
+  const weekKeys = await storageList('week:');
+  const weeks = {};
+  for(const k of weekKeys){ const v = await storageGet(k); if(v!=null) weeks[k]=v; }
+  const updatedAt = parseInt((await storageGet('local-updated-at'))||'0', 10);
+  return {
+    updatedAt,
+    banks:{
+      lunch: await storageGet('meal-bank-lunch'),
+      dinner: await storageGet('meal-bank-dinner'),
+      prep: await storageGet('meal-bank-prep')
+    },
+    weeks
+  };
+}
+async function applyAllData(remote){
+  if(remote.banks){
+    if(remote.banks.lunch != null) await storageSet('meal-bank-lunch', remote.banks.lunch);
+    if(remote.banks.dinner != null) await storageSet('meal-bank-dinner', remote.banks.dinner);
+    if(remote.banks.prep != null) await storageSet('meal-bank-prep', remote.banks.prep);
+  }
+  if(remote.weeks) for(const k in remote.weeks) await storageSet(k, remote.weeks[k]);
+  await storageSet('local-updated-at', String(remote.updatedAt || Date.now()));
+}
+
+function gsyncSetState(state, msg){
+  const el = document.getElementById('syncState');
+  if(!el) return;
+  el.dataset.state = state;
+  el.textContent = msg;
+}
+function gsyncRenderUser(){
+  const on = !!gUser;
+  const signinBtn = document.getElementById('signinBtn');
+  const userChip = document.getElementById('userChip');
+  if(signinBtn) signinBtn.hidden = on;
+  if(userChip) userChip.hidden = !on;
+  if(on){
+    const nameEl = document.getElementById('userName');
+    const picEl = document.getElementById('userPic');
+    if(nameEl) nameEl.textContent = gUser.name;
+    if(picEl) picEl.src = gUser.pic || '';
+  }
+}
+async function gfetch(url, opts={}){
+  const r = await fetch(url, {...opts, headers:{...(opts.headers||{}), Authorization:'Bearer '+accessToken}});
+  if(!r.ok){
+    let msg = 'HTTP '+r.status;
+    try{ const j = await r.json(); if(j.error && j.error.message) msg += ' — '+j.error.message; }catch(e){}
+    throw new Error(msg);
+  }
+  const ct = r.headers.get('content-type') || '';
+  return ct.includes('json') ? r.json() : r.text();
+}
+function gsyncFail(e){
+  console.error('Drive sync error:', e);
+  gsyncSetState('err', 'Sync error');
+}
+
+function initGIS(){
+  if(typeof google === 'undefined' || !google.accounts || !gsyncConfigured()) return;
+  if(tokenClient) return;
+  tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: GSYNC_CLIENT_ID, scope: GSYNC_SCOPES, callback: onToken,
+    error_callback: ()=>{ if(gUser) gsyncSetState('err','Sync paused'); }
+  });
+  if(gUser){
+    gsyncSetState('sync','Connecting…');
+    try{ tokenClient.requestAccessToken({prompt:''}); }catch(e){ gsyncSetState('err','Sync paused'); }
+  }
+}
+let gisRetries = 0;
+function loadGIS(){
+  if(typeof google !== 'undefined' && google.accounts){ initGIS(); return; }
+  if(gisRetries >= 6) return;
+  gisRetries++;
+  const s = document.createElement('script');
+  s.src = 'https://accounts.google.com/gsi/client';
+  s.async = true; s.defer = true;
+  s.onload = initGIS;
+  s.onerror = ()=> setTimeout(loadGIS, Math.min(3000*gisRetries, 20000));
+  document.head.appendChild(s);
+}
+
+async function onToken(resp){
+  if(resp.error){ if(gUser) gsyncSetState('err','Sync paused'); return; }
+  accessToken = resp.access_token;
+  tokenExp = Date.now() + ((resp.expires_in||3600)-60)*1000;
+  if(google.accounts.oauth2.hasGrantedAllScopes &&
+     !google.accounts.oauth2.hasGrantedAllScopes(resp, 'https://www.googleapis.com/auth/drive.file')){
+    gsyncSetState('err','Drive permission needed');
+    return;
+  }
+  try{
+    if(!gUser){
+      const u = await gfetch('https://www.googleapis.com/oauth2/v3/userinfo');
+      gUser = { name: u.name || u.email, email: u.email, pic: u.picture || '' };
+      localStorage.setItem('gsync.user', JSON.stringify(gUser));
+    }
+    gsyncRenderUser();
+    if(pendingPush){ pendingPush = false; await drivePush(); }
+    else await driveSync();
+  }catch(e){ gsyncFail(e); }
+}
+
+async function driveFind(){
+  const q = encodeURIComponent("name='"+GSYNC_FILE+"' and trashed=false");
+  const d = await gfetch('https://www.googleapis.com/drive/v3/files?q='+q+'&fields=files(id,modifiedTime)&orderBy=modifiedTime desc');
+  return (d.files && d.files[0]) ? d.files[0].id : null;
+}
+async function driveSync(){
+  gsyncSetState('sync','Syncing…');
+  driveFileId = await driveFind();
+  if(!driveFileId){
+    const meta = await gfetch('https://www.googleapis.com/drive/v3/files', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({name:GSYNC_FILE, mimeType:'application/json'})
+    });
+    driveFileId = meta.id;
+    await drivePush();
+    return;
+  }
+  const local = await collectAllData();
+  const raw = await gfetch('https://www.googleapis.com/drive/v3/files/'+driveFileId+'?alt=media');
+  let rem = null;
+  try{ rem = (typeof raw === 'string') ? JSON.parse(raw) : raw; }catch(e){}
+  if(rem && (rem.updatedAt||0) > (local.updatedAt||0)){
+    await applyAllData(rem);
+    gsyncSetState('ok','Synced');
+    if(onRemoteRefreshed) await onRemoteRefreshed();
+  } else if((local.updatedAt||0) > ((rem && rem.updatedAt) || 0)){
+    await drivePush();
+  } else {
+    gsyncSetState('ok','Synced');
+  }
+}
+async function drivePush(){
+  if(!gUser || !driveFileId) return;
+  gsyncSetState('sync','Syncing…');
+  const data = await collectAllData();
+  await gfetch('https://www.googleapis.com/upload/drive/v3/files/'+driveFileId+'?uploadType=media', {
+    method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(data)
+  });
+  gsyncSetState('ok','Synced');
+}
+function queuePush(){
+  if(!gUser || !gsyncConfigured()) return;
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(async ()=>{
+    try{
+      if(!accessToken || Date.now() >= tokenExp){
+        pendingPush = true;
+        if(tokenClient) tokenClient.requestAccessToken({prompt:''});
+        return;
+      }
+      if(!driveFileId) await driveSync(); else await drivePush();
+    }catch(e){ gsyncFail(e); }
+  }, 1500);
+}
+
+function attemptSync(){
+  if(!gUser || !gsyncConfigured()) return;
+  if(typeof google === 'undefined' || !google.accounts){ loadGIS(); return; }
+  if(!tokenClient) initGIS();
+  if(!accessToken || Date.now() >= tokenExp){
+    gsyncSetState('sync','Connecting…');
+    try{ tokenClient.requestAccessToken({prompt:''}); }catch(e){ gsyncSetState('err','Sync paused'); }
+  } else {
+    driveSync().catch(gsyncFail);
+  }
+}
+window.addEventListener('online', attemptSync);
+document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState === 'visible') attemptSync(); });
+
+/* Call once per page (after your own initial render). `onRefresh` should
+   reload data from storage and re-render — it runs automatically if a
+   newer copy was found on Drive, e.g. saved from another device. */
+function initGoogleSync(onRefresh){
+  onRemoteRefreshed = onRefresh;
+  const signinBtn = document.getElementById('signinBtn');
+  const signoutBtn = document.getElementById('signoutBtn');
+  if(!signinBtn) return; // this page has no auth UI
+
+  try{
+    const cached = localStorage.getItem('gsync.user');
+    if(cached) gUser = JSON.parse(cached);
+  }catch(e){}
+  gsyncRenderUser();
+  gsyncSetState(gUser ? 'sync' : 'off', gUser ? 'Connecting…' : 'Local only');
+
+  signinBtn.addEventListener('click', ()=>{
+    if(!gsyncConfigured()){
+      alert('Google sign-in isn\'t set up yet.\n\nCreate a free Google OAuth Client ID (Google Cloud Console → Credentials), enable the Drive API on that project, and paste the Client ID into common.js (GSYNC_CLIENT_ID). Until then this runs in local-only mode.');
+      return;
+    }
+    initGIS();
+    if(tokenClient) tokenClient.requestAccessToken({prompt: gUser ? '' : 'consent'});
+  });
+  if(signoutBtn){
+    signoutBtn.addEventListener('click', ()=>{
+      if(!confirm('Sign out? Your data stays in Google Drive and on this device.')) return;
+      try{ if(accessToken && typeof google !== 'undefined') google.accounts.oauth2.revoke(accessToken, ()=>{}); }catch(e){}
+      clearTimeout(saveTimer); pendingPush = false;
+      gUser = null; accessToken = null; tokenExp = 0; driveFileId = null;
+      localStorage.removeItem('gsync.user');
+      gsyncRenderUser();
+      gsyncSetState('off','Local only');
+    });
+  }
+
+  // Previously signed in on this device/browser? Reconnect silently — no popup.
+  if(gUser && gsyncConfigured()) loadGIS();
 }
