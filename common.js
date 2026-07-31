@@ -529,8 +529,21 @@ function initGoogleSync(onRefresh){
       alert('Google sign-in isn\'t set up yet.\n\nCreate a free Google OAuth Client ID (Google Cloud Console → Credentials), enable the Drive API on that project, and paste the Client ID into common.js (GSYNC_CLIENT_ID). Until then this runs in local-only mode.');
       return;
     }
-    initGIS();
-    if(tokenClient) tokenClient.requestAccessToken({prompt: gUser ? '' : 'consent'});
+    if(!tokenClient) initGIS();
+    if(tokenClient){
+      tokenClient.requestAccessToken({prompt: gUser ? '' : 'consent'});
+    } else {
+      // Google's sign-in script hasn't finished loading yet (slow network,
+      // or this is the very first click right as the page opened) — make
+      // sure it's on its way in, and ask for one more tap once it lands.
+      // (We can't auto-continue this into the sign-in popup ourselves once
+      // the script loads, since by then it's no longer inside this click's
+      // gesture and browsers block popups that aren't.)
+      loadGIS();
+      const original = signinBtn.textContent;
+      signinBtn.textContent = 'Loading… tap again in a moment';
+      setTimeout(()=>{ signinBtn.textContent = original; }, 2500);
+    }
   });
   if(signoutBtn){
     signoutBtn.addEventListener('click', ()=>{
@@ -551,6 +564,10 @@ function initGoogleSync(onRefresh){
     });
   }
 
-  // Previously signed in on this device/browser? Reconnect silently — no popup.
-  if(gUser && gsyncConfigured()) loadGIS();
+  // Load Google's sign-in script proactively on every visit — not just when
+  // someone was previously signed in — so the "Sign in" button already has
+  // everything it needs the very first time it's clicked. (initGIS() only
+  // auto-attempts a silent reconnect if gUser is already set, so this is
+  // safe to do unconditionally — it won't pop up anything on its own.)
+  if(gsyncConfigured()) loadGIS();
 }
