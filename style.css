@@ -25,6 +25,7 @@ a{color:inherit}
 .icon-btn{background:var(--navy2);border:1px solid rgba(255,255,255,.15);color:#fff;border-radius:8px;padding:7px 14px;font-size:13px;font-weight:600;white-space:nowrap}
 .icon-btn:hover{border-color:var(--teal)}
 .userchip{display:flex;align-items:center;gap:9px;background:var(--navy2);border:1px solid rgba(255,255,255,.15);border-radius:8px;padding:4px 6px 4px 4px}
+.userchip[hidden]{display:none}
 .userchip img{width:30px;height:30px;border-radius:7px;background:#274460}
 .userchip .uc-txt{line-height:1.15}
 .userchip b{display:block;font-size:12px;color:#fff;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

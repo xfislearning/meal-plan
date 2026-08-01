@@ -386,11 +386,17 @@ function initGIS(){
   if(tokenClient) return;
   tokenClient = google.accounts.oauth2.initTokenClient({
     client_id: GSYNC_CLIENT_ID, scope: GSYNC_SCOPES, callback: onToken,
-    error_callback: ()=>{ if(gUser) gsyncSetState('err','Sync paused'); }
+    // FedCM keeps silent renewal working now that browsers are phasing out
+    // the third-party cookies/iframes GIS used to rely on for prompt:''.
+    // Without it, silent renewal starts failing (often permanently, not
+    // just transiently) a while after sign-in — the exact "sync paused"
+    // symptom — with no way to recover short of signing out and back in.
+    use_fedcm_for_prompt: true,
+    error_callback: ()=>{ if(gUser) gsyncSetState('err','Sync paused — tap to reconnect'); }
   });
   if(gUser){
     gsyncSetState('sync','Connecting…');
-    try{ tokenClient.requestAccessToken({prompt:''}); }catch(e){ gsyncSetState('err','Sync paused'); }
+    try{ tokenClient.requestAccessToken({prompt:''}); }catch(e){ gsyncSetState('err','Sync paused — tap to reconnect'); }
   }
 }
 let gisRetries = 0;
@@ -407,7 +413,7 @@ function loadGIS(){
 }
 
 async function onToken(resp){
-  if(resp.error){ if(gUser) gsyncSetState('err','Sync paused'); return; }
+  if(resp.error){ if(gUser) gsyncSetState('err','Sync paused — tap to reconnect'); return; }
   accessToken = resp.access_token;
   tokenExp = Date.now() + ((resp.expires_in||3600)-60)*1000;
   if(google.accounts.oauth2.hasGrantedAllScopes &&
@@ -429,8 +435,16 @@ async function onToken(resp){
 
 async function driveFind(){
   const q = encodeURIComponent("name='"+GSYNC_FILE+"' and trashed=false");
-  const d = await gfetch('https://www.googleapis.com/drive/v3/files?q='+q+'&fields=files(id,modifiedTime)&orderBy=modifiedTime desc');
-  return (d.files && d.files[0]) ? d.files[0].id : null;
+  const d = await gfetch('https://www.googleapis.com/drive/v3/files?q='+q+'&fields=files(id,modifiedTime,ownedByMe)&orderBy=modifiedTime desc');
+  const files = d.files || [];
+  if(!files.length) return null;
+  // If two people each signed in before sharing was set up, each ends up
+  // owning their own same-named file. Once shared, always prefer a file
+  // someone else owns (i.e. one shared with us) over our own — otherwise
+  // we'd keep syncing to our private copy forever and never converge on
+  // the one true shared file.
+  const shared = files.find(f => f.ownedByMe === false);
+  return (shared || files[0]).id;
 }
 async function driveSync(){
   gsyncSetState('sync','Syncing…');
@@ -499,7 +513,7 @@ function attemptSync(){
   if(!tokenClient) initGIS();
   if(!accessToken || Date.now() >= tokenExp){
     gsyncSetState('sync','Connecting…');
-    try{ tokenClient.requestAccessToken({prompt:''}); }catch(e){ gsyncSetState('err','Sync paused'); }
+    try{ tokenClient.requestAccessToken({prompt:''}); }catch(e){ gsyncSetState('err','Sync paused — tap to reconnect'); }
   } else {
     driveSync().catch(gsyncFail);
   }
@@ -561,6 +575,26 @@ function initGoogleSync(onRefresh){
       const email = prompt("Share this plan with (their Google email address):");
       if(!email) return;
       await shareWithEmail(email.trim());
+    });
+  }
+
+  // Background token renewal is silent (prompt:'') and can fail for reasons
+  // that don't clear up on their own (e.g. a browser blocking the 3rd-party
+  // cookie/iframe it relies on) — that's what "Sync paused" means. Clicking
+  // the status pill in that state does a real, user-gesture-driven prompt,
+  // which works even when the silent path is permanently blocked.
+  const syncStateEl = document.getElementById('syncState');
+  if(syncStateEl){
+    syncStateEl.style.cursor = 'pointer';
+    syncStateEl.title = 'Tap to reconnect if sync gets stuck';
+    syncStateEl.addEventListener('click', (e)=>{
+      e.stopPropagation();
+      if(syncStateEl.dataset.state !== 'err') return;
+      if(!tokenClient) initGIS();
+      if(!tokenClient) return;
+      gsyncSetState('sync','Connecting…');
+      try{ tokenClient.requestAccessToken({prompt:'consent'}); }
+      catch(err){ gsyncSetState('err','Sync paused — tap to reconnect'); }
     });
   }
 
