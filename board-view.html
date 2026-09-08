@@ -38,6 +38,7 @@
             <span id="syncState" data-state="off">Local only</span>
           </div>
           <button id="shareBtn" title="Share with someone">Share</button>
+          <button id="backupBtn" title="Save a full backup to Google Drive as an Excel file">⬇ Backup</button>
           <button id="signoutBtn" title="Sign out">Sign out</button>
         </div>
       </div>
@@ -78,10 +79,10 @@
     </table>
   </div>
 
-  <h2 class="section-title">📅 Week Day Meal Plan <span class="tag">Mon–Fri</span></h2>
+  <h2 class="section-title">📅 Week Day Meal Plan <span class="tag">Mon–Sun</span></h2>
   <div class="tbl-wrap">
     <table>
-      <thead><tr><th style="width:150px;">Day</th><th>Lunch</th><th>Dinner</th></tr></thead>
+      <thead><tr><th style="width:120px;">Day</th><th>Breakfast</th><th>Lunch</th><th>Dinner</th></tr></thead>
       <tbody id="weekdayBody"></tbody>
     </table>
   </div>
@@ -98,7 +99,7 @@ function renderWeekendTable(){
   WEEKEND_DAYS.forEach(day=>{
     const idx = ALL_DAYS.indexOf(day);
     const date = addDays(selectedMonday, idx);
-    const entry = plan[day] || {prep:[]};
+    const entry = entryFor(plan, day);
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td class="day-cell"><b>${day}</b><small>${fmtShort(date)}</small></td>
@@ -110,13 +111,14 @@ function renderWeekendTable(){
 function renderWeekdayTable(){
   const tbody = document.getElementById('weekdayBody');
   tbody.innerHTML = '';
-  WEEKDAYS.forEach(day=>{
+  ALL_DAYS.forEach(day=>{
     const idx = ALL_DAYS.indexOf(day);
     const date = addDays(selectedMonday, idx);
-    const entry = plan[day] || {lunch:'', dinner:''};
+    const entry = entryFor(plan, day);
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td class="day-cell"><b>${day}</b><small>${fmtShort(date)}</small></td>
+      <td class="slot-cell" data-day="${day}" data-type="breakfast">${slotCellHtml(entry.breakfast, 'not planned')}</td>
       <td class="slot-cell" data-day="${day}" data-type="lunch">${slotCellHtml(entry.lunch, 'not planned')}</td>
       <td class="slot-cell" data-day="${day}" data-type="dinner">${slotCellHtml(entry.dinner, 'not planned')}</td>
     `;
@@ -130,8 +132,8 @@ document.getElementById('weekendBody').addEventListener('click', async (e)=>{
   const cell = e.target.closest('.slot-cell');
   const day = cell.getAttribute('data-day');
   const i = parseInt(xBtn.getAttribute('data-idx'),10);
-  plan[day] = plan[day] || {prep:[]};
-  plan[day].prep.splice(i,1);
+  const entry = ensureDayEntry(plan, day);
+  entry.prep.splice(i,1);
   await savePlan(selectedMonday, plan);
   renderWeekendTable();
 });
@@ -141,8 +143,8 @@ document.getElementById('weekdayBody').addEventListener('click', async (e)=>{
   const cell = e.target.closest('.slot-cell');
   const day = cell.getAttribute('data-day');
   const type = cell.getAttribute('data-type');
-  plan[day] = plan[day] || {lunch:'', dinner:''};
-  plan[day][type] = '';
+  const entry = ensureDayEntry(plan, day);
+  entry[type] = '';
   await savePlan(selectedMonday, plan);
   renderWeekdayTable();
 });

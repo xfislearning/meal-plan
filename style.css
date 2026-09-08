@@ -136,9 +136,16 @@ main{max-width:1160px;margin:0 auto;padding:26px 22px 60px}
 .add-row input{flex:1;border:1px solid var(--line);border-radius:8px;padding:9px 10px;background:#fff}
 .add-row input:focus{outline:2px solid var(--teal);outline-offset:-1px}
 
-/* ===== Tables ===== */
-.tbl-wrap{background:#fff;border:1px solid var(--line);border-radius:12px;overflow:hidden;margin-bottom:20px}
-table{width:100%;border-collapse:collapse;font-size:13.5px}
+/* ===== Tables =====
+   table-layout:fixed keeps columns at a set width instead of growing with
+   long meal names — without it, editing a cell with a long name could
+   silently push the whole table wider than the screen. overflow-x:auto on
+   the wrapper is the safety net: on narrow phones the table (min-width
+   below) can still be wider than the viewport, so it now scrolls
+   horizontally inside its own rounded card instead of being clipped with
+   no way to reach the cut-off content. */
+.tbl-wrap{background:#fff;border:1px solid var(--line);border-radius:12px;overflow-x:auto;overflow-y:hidden;margin-bottom:20px;-webkit-overflow-scrolling:touch}
+table{width:100%;min-width:520px;table-layout:fixed;border-collapse:collapse;font-size:13.5px}
 th{font-family:var(--mono);font-size:10.5px;letter-spacing:.8px;text-transform:uppercase;color:#fff;background:var(--navy);text-align:left;padding:10px 14px;white-space:nowrap}
 td{padding:10px 14px;border-top:1px solid var(--line);vertical-align:top}
 tbody tr:hover{background:#F8FAFC}

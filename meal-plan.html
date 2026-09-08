@@ -38,6 +38,7 @@
             <span id="syncState" data-state="off">Local only</span>
           </div>
           <button id="shareBtn" title="Share with someone">Share</button>
+          <button id="backupBtn" title="Save a full backup to Google Drive as an Excel file">⬇ Backup</button>
           <button id="signoutBtn" title="Sign out">Sign out</button>
         </div>
       </div>
@@ -49,7 +50,7 @@
   <div class="viewhead">
     <div>
       <h1>Meal Plan</h1>
-      <p>Weekend prep, then weekday lunch &amp; dinner.</p>
+      <p>Weekend prep, then breakfast, lunch &amp; dinner every day.</p>
     </div>
     <div class="pnav">
       <button id="prevWeek" title="Previous week">‹</button>
@@ -80,10 +81,10 @@
     </table>
   </div>
 
-  <h2 class="section-title">📅 Week Day Meal Plan <span class="tag">Mon–Fri</span></h2>
+  <h2 class="section-title">📅 Week Day Meal Plan <span class="tag">Mon–Sun</span></h2>
   <div class="tbl-wrap">
     <table>
-      <thead><tr><th style="width:150px;">Day</th><th>Lunch</th><th>Dinner</th></tr></thead>
+      <thead><tr><th style="width:120px;">Day</th><th>Breakfast</th><th>Lunch</th><th>Dinner</th></tr></thead>
       <tbody id="weekdayBody"></tbody>
     </table>
   </div>
@@ -107,11 +108,21 @@
 <script src="common.js"></script>
 <script>
 let selectedMonday, plan = {};
-let lunchBank = [], dinnerBank = [], prepBank = [];
-let pickerCtx = null; // { type: 'lunch'|'dinner'|'prep', day }
+let breakfastBank = [], lunchBank = [], dinnerBank = [], prepBank = [];
+let pickerCtx = null; // { type: 'breakfast'|'lunch'|'dinner'|'prep', day }
 
-function bankFor(type){ return type==='lunch' ? lunchBank : type==='dinner' ? dinnerBank : prepBank; }
-function bankKeyFor(type){ return type==='lunch' ? 'meal-bank-lunch' : type==='dinner' ? 'meal-bank-dinner' : 'meal-bank-prep'; }
+function bankFor(type){
+  if(type==='breakfast') return breakfastBank;
+  if(type==='lunch') return lunchBank;
+  if(type==='dinner') return dinnerBank;
+  return prepBank;
+}
+function bankKeyFor(type){
+  if(type==='breakfast') return 'meal-bank-breakfast';
+  if(type==='lunch') return 'meal-bank-lunch';
+  if(type==='dinner') return 'meal-bank-dinner';
+  return 'meal-bank-prep';
+}
 
 function renderWeekendTable(){
   const tbody = document.getElementById('weekendBody');
@@ -119,7 +130,7 @@ function renderWeekendTable(){
   WEEKEND_DAYS.forEach(day=>{
     const idx = ALL_DAYS.indexOf(day);
     const date = addDays(selectedMonday, idx);
-    const entry = plan[day] || {prep:[]};
+    const entry = entryFor(plan, day);
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td class="day-cell"><b>${FULL_DAY[day]}</b><small>${fmtShort(date)}</small></td>
@@ -131,13 +142,14 @@ function renderWeekendTable(){
 function renderWeekdayTable(){
   const tbody = document.getElementById('weekdayBody');
   tbody.innerHTML = '';
-  WEEKDAYS.forEach(day=>{
+  ALL_DAYS.forEach(day=>{
     const idx = ALL_DAYS.indexOf(day);
     const date = addDays(selectedMonday, idx);
-    const entry = plan[day] || {lunch:'', dinner:''};
+    const entry = entryFor(plan, day);
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td class="day-cell"><b>${FULL_DAY[day]}</b><small>${fmtShort(date)}</small></td>
+      <td class="slot-cell fillable" data-day="${day}" data-type="breakfast">${slotCellHtml(entry.breakfast)}</td>
       <td class="slot-cell fillable" data-day="${day}" data-type="lunch">${slotCellHtml(entry.lunch)}</td>
       <td class="slot-cell fillable" data-day="${day}" data-type="dinner">${slotCellHtml(entry.dinner)}</td>
     `;
@@ -209,15 +221,15 @@ async function pickMeal(meal, isNew){
     await saveBank(bankKeyFor(type), list);
   }
   if(type === 'prep'){
-    plan[day] = plan[day] || {prep:[]};
-    if(!plan[day].prep.includes(meal)) plan[day].prep.push(meal);
+    const entry = ensureDayEntry(plan, day);
+    if(!entry.prep.includes(meal)) entry.prep.push(meal);
     await savePlan(selectedMonday, plan);
     renderWeekendTable();
     renderPickerList(document.getElementById('mpSearch').value);
     document.getElementById('mpSearch').focus();
   } else {
-    plan[day] = plan[day] || {lunch:'', dinner:''};
-    plan[day][type] = meal;
+    const entry = ensureDayEntry(plan, day);
+    entry[type] = meal;
     await savePlan(selectedMonday, plan);
     renderWeekdayTable();
     closePicker();
@@ -237,8 +249,8 @@ document.getElementById('weekendBody').addEventListener('click', async (e)=>{
   const xBtn = e.target.closest('.slot-x');
   if(xBtn){
     const i = parseInt(xBtn.getAttribute('data-idx'),10);
-    plan[day] = plan[day] || {prep:[]};
-    plan[day].prep.splice(i,1);
+    const entry = ensureDayEntry(plan, day);
+    entry.prep.splice(i,1);
     await savePlan(selectedMonday, plan);
     renderWeekendTable();
     return;
@@ -254,8 +266,8 @@ document.getElementById('weekdayBody').addEventListener('click', async (e)=>{
   const type = cell.getAttribute('data-type');
   const xBtn = e.target.closest('.slot-x');
   if(xBtn){
-    plan[day] = plan[day] || {lunch:'', dinner:''};
-    plan[day][type] = '';
+    const entry = ensureDayEntry(plan, day);
+    entry[type] = '';
     await savePlan(selectedMonday, plan);
     renderWeekdayTable();
     return;
@@ -266,6 +278,7 @@ document.getElementById('weekdayBody').addEventListener('click', async (e)=>{
 
 async function loadAndRender(){
   plan = await loadPlan(selectedMonday);
+  breakfastBank = await loadBank('meal-bank-breakfast', null, DEFAULT_BREAKFAST);
   lunchBank = await loadBank('meal-bank-lunch', 'meal-bank', DEFAULT_LUNCH);
   dinnerBank = await loadBank('meal-bank-dinner', null, DEFAULT_DINNER);
   prepBank = await loadBank('meal-bank-prep', null, DEFAULT_PREP);

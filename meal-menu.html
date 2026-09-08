@@ -38,6 +38,7 @@
             <span id="syncState" data-state="off">Local only</span>
           </div>
           <button id="shareBtn" title="Share with someone">Share</button>
+          <button id="backupBtn" title="Save a full backup to Google Drive as an Excel file">⬇ Backup</button>
           <button id="signoutBtn" title="Sign out">Sign out</button>
         </div>
       </div>
@@ -60,6 +61,16 @@
     <div class="add-row">
       <input type="text" id="newPrepInput" placeholder="Add a prep idea…">
       <button class="btn" id="addPrepBtn">Add</button>
+    </div>
+  </div>
+
+  <div class="formcard">
+    <h2>🍳 Breakfast ideas</h2>
+    <div class="sub">Quick options to start the day.</div>
+    <div class="chips" id="breakfastBankEl"></div>
+    <div class="add-row">
+      <input type="text" id="newBreakfastInput" placeholder="Add a breakfast idea…">
+      <button class="btn" id="addBreakfastBtn">Add</button>
     </div>
   </div>
 
@@ -87,7 +98,7 @@
 
 <script src="common.js"></script>
 <script>
-let lunchBank = [], dinnerBank = [], prepBank = [];
+let breakfastBank = [], lunchBank = [], dinnerBank = [], prepBank = [];
 
 function renderBankSection(containerId, list, saveKey){
   const wrap = document.getElementById(containerId);
@@ -114,14 +125,16 @@ function renderBankSection(containerId, list, saveKey){
 }
 function renderAll(){
   renderBankSection('prepBankEl', prepBank, 'meal-bank-prep');
+  renderBankSection('breakfastBankEl', breakfastBank, 'meal-bank-breakfast');
   renderBankSection('lunchBankEl', lunchBank, 'meal-bank-lunch');
   renderBankSection('dinnerBankEl', dinnerBank, 'meal-bank-dinner');
 }
 function wireAdd(bankName, btnId, inputId){
   const getSet = {
-    prep:   { get: ()=>prepBank,   set: v=>{prepBank=v;},   key:'meal-bank-prep' },
-    lunch:  { get: ()=>lunchBank,  set: v=>{lunchBank=v;},  key:'meal-bank-lunch' },
-    dinner: { get: ()=>dinnerBank, set: v=>{dinnerBank=v;}, key:'meal-bank-dinner' }
+    prep:      { get: ()=>prepBank,      set: v=>{prepBank=v;},      key:'meal-bank-prep' },
+    breakfast: { get: ()=>breakfastBank, set: v=>{breakfastBank=v;}, key:'meal-bank-breakfast' },
+    lunch:     { get: ()=>lunchBank,     set: v=>{lunchBank=v;},     key:'meal-bank-lunch' },
+    dinner:    { get: ()=>dinnerBank,    set: v=>{dinnerBank=v;},    key:'meal-bank-dinner' }
   }[bankName];
   document.getElementById(btnId).onclick = async ()=>{
     const input = document.getElementById(inputId);
@@ -142,11 +155,13 @@ async function loadAndRender(){
   lunchBank = await loadBank('meal-bank-lunch', 'meal-bank', DEFAULT_LUNCH);
   dinnerBank = await loadBank('meal-bank-dinner', null, DEFAULT_DINNER);
   prepBank = await loadBank('meal-bank-prep', null, DEFAULT_PREP);
+  breakfastBank = await loadBank('meal-bank-breakfast', null, DEFAULT_BREAKFAST);
   renderAll();
 }
 async function init(){
   await loadAndRender();
   wireAdd('prep','addPrepBtn','newPrepInput');
+  wireAdd('breakfast','addBreakfastBtn','newBreakfastInput');
   wireAdd('lunch','addLunchBtn','newLunchInput');
   wireAdd('dinner','addDinnerBtn','newDinnerInput');
   initGoogleSync(loadAndRender);

@@ -1,4 +1,4 @@
-const CACHE = "family-meal-plan-v3";
+const CACHE = "family-meal-plan-v5";
 const ASSETS = [
   "./", "index.html", "meal-menu.html", "meal-plan.html", "board-view.html",
   "style.css", "common.js", "manifest.json", "icon-192.png", "icon-512.png"

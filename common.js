@@ -4,6 +4,7 @@ const WEEKDAYS = ['Mon','Tue','Wed','Thu','Fri'];
 const WEEKEND_DAYS = ['Sat','Sun'];
 const FULL_DAY = {Mon:'Monday',Tue:'Tuesday',Wed:'Wednesday',Thu:'Thursday',Fri:'Friday',Sat:'Saturday',Sun:'Sunday'};
 
+const DEFAULT_BREAKFAST = ['Oatmeal','Eggs & Toast','Yogurt & Granola','Smoothie','Pancakes','Cereal','Breakfast Burrito','Fruit & Toast'];
 const DEFAULT_LUNCH = ['Premade Pizza','Chicken Salad','Frozen Chicken','Leftovers','Sandwiches','Soup','Salad Bar','Eat Out'];
 const DEFAULT_DINNER = ['Tacos','Stir Fry','Pasta Bake','Grilled Chicken','Sheet Pan Veggies','Soup','Breakfast for Dinner','Eat Out'];
 const DEFAULT_PREP = ['Cook Chicken Batch','Chop Vegetables','Cook Rice or Grains','Prep Sauces','Marinate Meat','Wash & Prep Produce','Grocery Shopping','Bake Bread'];
@@ -22,6 +23,11 @@ function iconFor(meal){
   if(m.includes('taco') || m.includes('burrito')) return '🌮';
   if(m.includes('stir fry') || m.includes('stir-fry')) return '🥘';
   if(m.includes('chop') || m.includes('veg') || m.includes('produce')) return '🥦';
+  if(m.includes('oatmeal') || m.includes('cereal') || m.includes('granola') || m.includes('yogurt')) return '🥣';
+  if(m.includes('smoothie')) return '🥤';
+  if(m.includes('pancake') || m.includes('waffle')) return '🥞';
+  if(m.includes('toast')) return '🍞';
+  if(m.includes('fruit')) return '🍓';
   if(m.includes('breakfast') || m.includes('egg')) return '🍳';
   if(m.includes('grocery')) return '🛒';
   if(m.includes('sauce')) return '🧂';
@@ -127,7 +133,34 @@ async function storageList(prefix){
 
 /* ===== Data helpers ===== */
 function weekKeyFor(monday){ return 'week:' + fmtISO(monday); }
-function defaultEntry(day){ return WEEKEND_DAYS.includes(day) ? {prep:[]} : {lunch:'', dinner:''}; }
+function defaultEntry(day){
+  return WEEKEND_DAYS.includes(day)
+    ? {prep:[], breakfast:'', lunch:'', dinner:''}
+    : {breakfast:'', lunch:'', dinner:''};
+}
+/* Read-only, always-safe view of a day's plan — never mutates `plan` */
+function entryFor(plan, day){
+  const e = plan[day] || {};
+  return {
+    breakfast: e.breakfast || '',
+    lunch: e.lunch || '',
+    dinner: e.dinner || '',
+    prep: Array.isArray(e.prep) ? e.prep : []
+  };
+}
+/* Ensures plan[day] exists with every field it needs (breakfast/lunch/dinner
+   for every day, plus prep for Sat/Sun) before mutating it — a Sat/Sun entry
+   can now be created by either the weekend-prep table or the breakfast/
+   lunch/dinner table, so both fields must always be present. */
+function ensureDayEntry(plan, day){
+  if(!plan[day]){ plan[day] = defaultEntry(day); return plan[day]; }
+  const e = plan[day];
+  if(e.breakfast === undefined) e.breakfast = '';
+  if(e.lunch === undefined) e.lunch = '';
+  if(e.dinner === undefined) e.dinner = '';
+  if(WEEKEND_DAYS.includes(day) && !Array.isArray(e.prep)) e.prep = [];
+  return e;
+}
 
 async function loadBank(key, fallbackKey, defaults){
   const raw = await storageGet(key);
@@ -148,13 +181,15 @@ async function loadPlan(monday){
   const migrated = {};
   Object.keys(parsed).forEach(day=>{
     const r = parsed[day];
+    const entry = {
+      breakfast: (r && typeof r === 'object' && r.breakfast) || '',
+      lunch: (typeof r === 'string') ? r : ((r && r.lunch) || ''),
+      dinner: (r && typeof r === 'object' && r.dinner) || ''
+    };
     if(WEEKEND_DAYS.includes(day)){
-      migrated[day] = (r && Array.isArray(r.prep)) ? {prep:r.prep.slice()} : {prep:[]};
-    } else {
-      migrated[day] = (typeof r === 'string')
-        ? {lunch:r, dinner:''}
-        : {lunch:(r&&r.lunch)||'', dinner:(r&&r.dinner)||''};
+      entry.prep = (r && Array.isArray(r.prep)) ? r.prep.slice() : [];
     }
+    migrated[day] = entry;
   });
   return migrated;
 }
@@ -428,7 +463,8 @@ async function onToken(resp){
       localStorage.setItem('gsync.user', JSON.stringify(gUser));
     }
     gsyncRenderUser();
-    if(pendingPush){ pendingPush = false; await drivePush(); }
+    if(pendingBackup){ pendingBackup = false; await performBackupAndReport(); }
+    else if(pendingPush){ pendingPush = false; await drivePush(); }
     else await driveSync();
   }catch(e){ gsyncFail(e); }
 }
@@ -507,6 +543,149 @@ async function shareWithEmail(email){
   }
 }
 
+/* =====================================================================
+   Excel backup — a human-readable, restorable snapshot of everything
+   saved (all meal-idea banks + every week ever planned), uploaded
+   straight to the same Google Drive account as a new .xlsx file. This is
+   separate from the JSON file Drive sync uses internally: that one is a
+   live, machine-only sync copy; this is a dated backup you could open in
+   Excel/Sheets and read or restore from by hand.
+   ===================================================================== */
+const XLSX_LIB_URL = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+let xlsxLibPromise = null;
+function loadXLSXLib(){
+  if(typeof XLSX !== 'undefined') return Promise.resolve();
+  if(xlsxLibPromise) return xlsxLibPromise;
+  xlsxLibPromise = new Promise((resolve, reject)=>{
+    const s = document.createElement('script');
+    s.src = XLSX_LIB_URL;
+    s.onload = ()=> resolve();
+    s.onerror = ()=>{ xlsxLibPromise = null; reject(new Error('Could not load the Excel library — check your connection and try again.')); };
+    document.head.appendChild(s);
+  });
+  return xlsxLibPromise;
+}
+
+/* Reads every meal-idea bank plus every saved week's plan. Pure read —
+   safe to call any time, doesn't touch what's currently on screen. */
+async function gatherBackupData(){
+  const [breakfast, lunch, dinner, prep] = await Promise.all([
+    loadBank('meal-bank-breakfast', null, DEFAULT_BREAKFAST),
+    loadBank('meal-bank-lunch', 'meal-bank', DEFAULT_LUNCH),
+    loadBank('meal-bank-dinner', null, DEFAULT_DINNER),
+    loadBank('meal-bank-prep', null, DEFAULT_PREP)
+  ]);
+  const weekKeys = (await storageList('week:')).slice().sort();
+  const weeks = [];
+  for(const key of weekKeys){
+    const monday = new Date(key.slice('week:'.length) + 'T00:00:00');
+    if(isNaN(monday)) continue;
+    const plan = await loadPlan(monday);
+    weeks.push({ monday, plan });
+  }
+  return { breakfast, lunch, dinner, prep, weeks };
+}
+
+/* ----- Pure row-builders: plain data in, a 2D array out. No DOM, no
+   network — easy to unit-test and safe to reuse if the sheet layout
+   ever needs to change. ----- */
+function buildIdeasSheetRows(data){
+  const cols = [
+    ['Breakfast', ...data.breakfast],
+    ['Lunch', ...data.lunch],
+    ['Dinner', ...data.dinner],
+    ['Meal Prep', ...data.prep]
+  ];
+  const maxLen = Math.max(0, ...cols.map(c => c.length - 1));
+  const rows = [cols.map(c => c[0])];
+  for(let i = 0; i < maxLen; i++){
+    rows.push(cols.map(c => c[i+1] || ''));
+  }
+  return rows;
+}
+function buildPlanSheetRows(data){
+  const rows = [['Week Of','Day','Date','Breakfast','Lunch','Dinner','Meal Prep']];
+  data.weeks.forEach(({monday, plan})=>{
+    ALL_DAYS.forEach(day=>{
+      const idx = ALL_DAYS.indexOf(day);
+      const date = addDays(monday, idx);
+      const entry = entryFor(plan, day);
+      rows.push([
+        fmtISO(monday), FULL_DAY[day], fmtISO(date),
+        entry.breakfast, entry.lunch, entry.dinner, entry.prep.join('; ')
+      ]);
+    });
+  });
+  return rows;
+}
+function buildBackupWorkbook(data){
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(buildIdeasSheetRows(data)), 'Meal Ideas');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(buildPlanSheetRows(data)), 'Weekly Plan');
+  const arr = XLSX.write(wb, { type:'array', bookType:'xlsx' });
+  return new Blob([arr], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+}
+
+async function driveUploadBackup(blob, filename){
+  const meta = await gfetch('https://www.googleapis.com/drive/v3/files', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ name: filename })
+  });
+  await gfetch('https://www.googleapis.com/upload/drive/v3/files/'+meta.id+'?uploadType=media', {
+    method:'PATCH',
+    headers:{'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'},
+    body: blob
+  });
+  return meta.id;
+}
+
+async function doBackupNow(){
+  await loadXLSXLib();
+  const data = await gatherBackupData();
+  const blob = buildBackupWorkbook(data);
+  const filename = `Family Meal Plan Backup - ${fmtISO(new Date())}.xlsx`;
+  await driveUploadBackup(blob, filename);
+  return filename;
+}
+
+let pendingBackup = false;
+
+async function performBackupAndReport(){
+  const btn = document.getElementById('backupBtn');
+  try{
+    const filename = await doBackupNow();
+    alert('Backup saved to your Google Drive as "' + filename + '".');
+  }catch(e){
+    console.error('Backup failed:', e);
+    alert('Backup failed: ' + e.message);
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = btn.dataset.originalText || '⬇ Backup'; }
+  }
+}
+
+function backupToExcel(){
+  if(!gUser){ alert('Sign in first, then back up.'); return; }
+  const btn = document.getElementById('backupBtn');
+  if(btn){
+    if(!btn.dataset.originalText) btn.dataset.originalText = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Backing up…';
+  }
+  if(!accessToken || Date.now() >= tokenExp){
+    pendingBackup = true;
+    if(!tokenClient) initGIS();
+    if(tokenClient){
+      try{ tokenClient.requestAccessToken({prompt:''}); }
+      catch(e){
+        pendingBackup = false;
+        if(btn){ btn.disabled = false; btn.textContent = btn.dataset.originalText; }
+        alert('Could not reach Google — try again in a moment.');
+      }
+    }
+    return;
+  }
+  performBackupAndReport();
+}
+
 function attemptSync(){
   if(!gUser || !gsyncConfigured()) return;
   if(typeof google === 'undefined' || !google.accounts){ loadGIS(); return; }
@@ -529,6 +708,7 @@ function initGoogleSync(onRefresh){
   const signinBtn = document.getElementById('signinBtn');
   const signoutBtn = document.getElementById('signoutBtn');
   const shareBtn = document.getElementById('shareBtn');
+  const backupBtn = document.getElementById('backupBtn');
   if(!signinBtn) return; // this page has no auth UI
 
   try{
@@ -576,6 +756,9 @@ function initGoogleSync(onRefresh){
       if(!email) return;
       await shareWithEmail(email.trim());
     });
+  }
+  if(backupBtn){
+    backupBtn.addEventListener('click', backupToExcel);
   }
 
   // Background token renewal is silent (prompt:'') and can fail for reasons
