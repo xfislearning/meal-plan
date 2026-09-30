@@ -164,6 +164,29 @@ tbody tr:hover{background:#F8FAFC}
 
 .empty-note{color:var(--muted);text-align:center;font-size:13px;padding:26px 16px}
 
+/* Below ~680px, stop relying on horizontal scrolling for the plan tables
+   altogether — swipe-to-scroll a wide table is easy to miss (no visible
+   scrollbar on iOS, and a vertical page scroll can swallow the gesture),
+   which is exactly how a Dinner cell ends up "unreachable" on a phone.
+   Instead each day becomes its own card with Breakfast/Lunch/Dinner (or
+   Meal Prep) stacked as full-width rows — nothing is ever off-screen, and
+   the tap target for each meal is bigger too. */
+@media (max-width:680px){
+  .tbl-wrap{overflow-x:visible}
+  table{min-width:0;table-layout:auto}
+  table,thead,tbody,tr,th,td{display:block;width:auto}
+  thead{display:none}
+  tbody tr{border:1px solid var(--line);border-radius:10px;margin-bottom:12px;overflow:hidden}
+  tbody tr:hover{background:none}
+  td{border-top:1px solid var(--line);padding:10px 14px}
+  td:first-child{border-top:none;background:var(--bg)}
+  td.slot-cell::before,td.prep-cell::before{
+    content:attr(data-label);display:block;font-family:var(--mono);font-size:10px;
+    letter-spacing:.6px;text-transform:uppercase;color:var(--muted);margin-bottom:4px;
+  }
+  .prep-cell{min-width:0}
+}
+
 .meal-picker{
   display:none;position:absolute;z-index:45;background:#fff;border:1px solid var(--line);
   border-radius:12px;box-shadow:0 16px 36px rgba(14,34,51,.22);

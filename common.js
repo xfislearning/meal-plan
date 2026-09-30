@@ -566,8 +566,10 @@ function loadXLSXLib(){
   return xlsxLibPromise;
 }
 
-/* Reads every meal-idea bank plus every saved week's plan. Pure read —
-   safe to call any time, doesn't touch what's currently on screen. */
+/* Reads every meal-idea bank plus every saved week's plan (and this
+   calendar week specifically, even if it hasn't been touched/saved yet).
+   Pure read — safe to call any time, doesn't touch what's currently on
+   screen. */
 async function gatherBackupData(){
   const [breakfast, lunch, dinner, prep] = await Promise.all([
     loadBank('meal-bank-breakfast', null, DEFAULT_BREAKFAST),
@@ -583,13 +585,15 @@ async function gatherBackupData(){
     const plan = await loadPlan(monday);
     weeks.push({ monday, plan });
   }
-  return { breakfast, lunch, dinner, prep, weeks };
+  const thisWeekPlan = await loadPlan(THIS_MONDAY);
+  return { breakfast, lunch, dinner, prep, weeks, thisWeek: { monday: THIS_MONDAY, plan: thisWeekPlan } };
 }
 
 /* ----- Pure row-builders: plain data in, a 2D array out. No DOM, no
-   network — easy to unit-test and safe to reuse if the sheet layout
-   ever needs to change. ----- */
-function buildIdeasSheetRows(data){
+   network — easy to unit-test and safe to reuse if a sheet's layout ever
+   needs to change. One function per exported tab: Meal Menu, Meal Plan,
+   Dashboard. ----- */
+function buildMealMenuSheetRows(data){
   const cols = [
     ['Breakfast', ...data.breakfast],
     ['Lunch', ...data.lunch],
@@ -603,7 +607,7 @@ function buildIdeasSheetRows(data){
   }
   return rows;
 }
-function buildPlanSheetRows(data){
+function buildMealPlanSheetRows(data){
   const rows = [['Week Of','Day','Date','Breakfast','Lunch','Dinner','Meal Prep']];
   data.weeks.forEach(({monday, plan})=>{
     ALL_DAYS.forEach(day=>{
@@ -618,10 +622,59 @@ function buildPlanSheetRows(data){
   });
   return rows;
 }
+function buildDashboardSheetRows(data){
+  let daysWithAnyPlan = 0, daysFullyPlanned = 0;
+  const freq = { breakfast:{}, lunch:{}, dinner:{} };
+  data.weeks.forEach(({plan})=>{
+    ALL_DAYS.forEach(day=>{
+      const e = entryFor(plan, day);
+      if(e.breakfast || e.lunch || e.dinner || e.prep.length) daysWithAnyPlan++;
+      if(e.breakfast && e.lunch && e.dinner) daysFullyPlanned++;
+      ['breakfast','lunch','dinner'].forEach(t=>{
+        if(e[t]) freq[t][e[t]] = (freq[t][e[t]] || 0) + 1;
+      });
+    });
+  });
+  function topOf(freqObj){
+    const entries = Object.entries(freqObj);
+    if(!entries.length) return '—';
+    entries.sort((a,b)=> b[1]-a[1]);
+    return `${entries[0][0]} (${entries[0][1]}x)`;
+  }
+
+  const rows = [];
+  rows.push(['Family Meal Plan — Dashboard']);
+  rows.push(['Generated', new Date().toLocaleString()]);
+  rows.push([]);
+  rows.push(['Idea Bank Totals']);
+  rows.push(['Breakfast ideas', data.breakfast.length]);
+  rows.push(['Lunch ideas', data.lunch.length]);
+  rows.push(['Dinner ideas', data.dinner.length]);
+  rows.push(['Meal prep ideas', data.prep.length]);
+  rows.push([]);
+  rows.push(['Planning Coverage']);
+  rows.push(['Weeks saved', data.weeks.length]);
+  rows.push(['Days with at least one meal/prep planned', daysWithAnyPlan]);
+  rows.push(['Days fully planned (breakfast + lunch + dinner)', daysFullyPlanned]);
+  rows.push([]);
+  rows.push(['Most-Planned Meals (across all saved weeks)']);
+  rows.push(['Breakfast', topOf(freq.breakfast)]);
+  rows.push(['Lunch', topOf(freq.lunch)]);
+  rows.push(['Dinner', topOf(freq.dinner)]);
+  rows.push([]);
+  rows.push([`This Week at a Glance (week of ${fmtISO(data.thisWeek.monday)})`]);
+  rows.push(['Day','Breakfast','Lunch','Dinner','Meal Prep']);
+  ALL_DAYS.forEach(day=>{
+    const e = entryFor(data.thisWeek.plan, day);
+    rows.push([FULL_DAY[day], e.breakfast, e.lunch, e.dinner, e.prep.join('; ')]);
+  });
+  return rows;
+}
 function buildBackupWorkbook(data){
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(buildIdeasSheetRows(data)), 'Meal Ideas');
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(buildPlanSheetRows(data)), 'Weekly Plan');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(buildMealMenuSheetRows(data)), 'Meal Menu');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(buildMealPlanSheetRows(data)), 'Meal Plan');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(buildDashboardSheetRows(data)), 'Dashboard');
   const arr = XLSX.write(wb, { type:'array', bookType:'xlsx' });
   return new Blob([arr], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
 }

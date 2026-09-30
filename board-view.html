@@ -103,7 +103,7 @@ function renderWeekendTable(){
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td class="day-cell"><b>${day}</b><small>${fmtShort(date)}</small></td>
-      <td class="slot-cell prep-cell" data-day="${day}">${prepCellHtml(entry.prep, 'no prep planned')}</td>
+      <td class="slot-cell prep-cell" data-day="${day}" data-label="Meal Prep">${prepCellHtml(entry.prep, 'no prep planned')}</td>
     `;
     tbody.appendChild(tr);
   });
@@ -118,9 +118,9 @@ function renderWeekdayTable(){
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td class="day-cell"><b>${day}</b><small>${fmtShort(date)}</small></td>
-      <td class="slot-cell" data-day="${day}" data-type="breakfast">${slotCellHtml(entry.breakfast, 'not planned')}</td>
-      <td class="slot-cell" data-day="${day}" data-type="lunch">${slotCellHtml(entry.lunch, 'not planned')}</td>
-      <td class="slot-cell" data-day="${day}" data-type="dinner">${slotCellHtml(entry.dinner, 'not planned')}</td>
+      <td class="slot-cell" data-day="${day}" data-type="breakfast" data-label="Breakfast">${slotCellHtml(entry.breakfast, 'not planned')}</td>
+      <td class="slot-cell" data-day="${day}" data-type="lunch" data-label="Lunch">${slotCellHtml(entry.lunch, 'not planned')}</td>
+      <td class="slot-cell" data-day="${day}" data-type="dinner" data-label="Dinner">${slotCellHtml(entry.dinner, 'not planned')}</td>
     `;
     tbody.appendChild(tr);
   });
