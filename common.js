@@ -66,6 +66,17 @@ const NEXT_MONDAY = addDays(THIS_MONDAY, 7);
   document.addEventListener('click', ()=> dropdown.classList.remove('open'));
 })();
 
+/* Shared across the install-prompt code below and the Google sign-in flow
+   further down — both need to know if we're running as an installed
+   home-screen app rather than a normal browser tab. */
+function isStandaloneMode(){
+  return (window.matchMedia && matchMedia('(display-mode: standalone)').matches)
+         || window.navigator.standalone === true;
+}
+function isIOSDevice(){
+  return /iP(hone|od|ad)/.test(navigator.userAgent);
+}
+
 /* ===== Install to home screen (PWA) =====
    Chrome/Edge/Android show a native one-tap prompt via beforeinstallprompt.
    iOS Safari never fires that event, so the button falls back to showing
@@ -76,9 +87,8 @@ const NEXT_MONDAY = addDays(THIS_MONDAY, 7);
   const btn = document.getElementById('installBtn');
   if(!btn) return;
   let deferredPrompt = null;
-  const isStandalone = (window.matchMedia && matchMedia('(display-mode: standalone)').matches)
-                        || window.navigator.standalone === true;
-  const isIOS = /iP(hone|od|ad)/.test(navigator.userAgent);
+  const isStandalone = isStandaloneMode();
+  const isIOS = isIOSDevice();
 
   window.addEventListener('beforeinstallprompt', (e)=>{
     e.preventDefault();
@@ -427,7 +437,23 @@ function initGIS(){
     // just transiently) a while after sign-in — the exact "sync paused"
     // symptom — with no way to recover short of signing out and back in.
     use_fedcm_for_prompt: true,
-    error_callback: ()=>{ if(gUser) gsyncSetState('err','Sync paused — tap to reconnect'); }
+    error_callback: (err)=>{
+      console.error('Google sign-in error:', err);
+      if(gUser){
+        gsyncSetState('err','Sync paused — tap to reconnect');
+        return;
+      }
+      // First-time sign-in failed — this used to fail completely silently
+      // (nothing shown at all) because this callback only spoke up once you
+      // were already signed in. Always say *something* now, since "I tapped
+      // the button and nothing happened" is exactly the confusing case this
+      // guarded against.
+      if(isIOSDevice() && isStandaloneMode()){
+        alert('Google sign-in can\'t complete from this home screen app — Google blocks its sign-in popup inside installed home-screen apps on iPhone/iPad as a security measure.\n\nTo sign in: open this same site in Safari (not the home screen icon) and tap "Sign in with Google" there. Your plan and settings are shared between Safari and the home screen icon, so once you\'re signed in you can keep using either one.');
+      } else {
+        alert('Google sign-in didn\'t go through. If a pop-up was blocked, allow pop-ups for this site and try again.');
+      }
+    }
   });
   if(gUser){
     gsyncSetState('sync','Connecting…');
@@ -776,9 +802,23 @@ function initGoogleSync(onRefresh){
       alert('Google sign-in isn\'t set up yet.\n\nCreate a free Google OAuth Client ID (Google Cloud Console → Credentials), enable the Drive API on that project, and paste the Client ID into common.js (GSYNC_CLIENT_ID). Until then this runs in local-only mode.');
       return;
     }
+    // Google blocks its own sign-in pop-up from completing inside an
+    // installed iOS home-screen app (it treats it like an embedded app
+    // browser, for anti-phishing reasons) — attempting it just shows a
+    // "not allowed" message and then goes quiet on later taps. Catch this
+    // up front with a clear explanation instead of letting that happen.
+    if(!gUser && isIOSDevice() && isStandaloneMode()){
+      alert('Google sign-in can\'t complete from this home screen app — Google blocks its sign-in popup inside installed home-screen apps on iPhone/iPad as a security measure.\n\nTo sign in: open this same site in Safari (not the home screen icon) and tap "Sign in with Google" there. Your plan and settings are shared between Safari and the home screen icon, so once you\'re signed in you can keep using either one.');
+      return;
+    }
     if(!tokenClient) initGIS();
     if(tokenClient){
-      tokenClient.requestAccessToken({prompt: gUser ? '' : 'consent'});
+      try{
+        tokenClient.requestAccessToken({prompt: gUser ? '' : 'consent'});
+      }catch(e){
+        console.error('requestAccessToken threw:', e);
+        alert('Google sign-in couldn\'t start. If you\'re using the app icon on your home screen, try opening the site in Safari instead and signing in there.');
+      }
     } else {
       // Google's sign-in script hasn't finished loading yet (slow network,
       // or this is the very first click right as the page opened) — make
@@ -826,6 +866,10 @@ function initGoogleSync(onRefresh){
     syncStateEl.addEventListener('click', (e)=>{
       e.stopPropagation();
       if(syncStateEl.dataset.state !== 'err') return;
+      if(isIOSDevice() && isStandaloneMode()){
+        alert('Reconnecting needs to happen in Safari, not the home screen app — Google blocks its sign-in popup inside installed home-screen apps on iPhone/iPad.\n\nOpen this site in Safari and tap "Sign in with Google" there; then come back here.');
+        return;
+      }
       if(!tokenClient) initGIS();
       if(!tokenClient) return;
       gsyncSetState('sync','Connecting…');

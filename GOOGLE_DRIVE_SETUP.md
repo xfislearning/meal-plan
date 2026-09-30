@@ -98,6 +98,18 @@ your deployed site. If you're starting fresh, follow all the steps.
 
 ## Troubleshooting
 
+- **Tapping "Sign in with Google" from the home screen icon shows a quick
+  "not allowed" message, then does nothing on later taps:** this is Google
+  itself, not a bug — Google deliberately blocks its sign-in pop-up from
+  completing inside an installed iOS home-screen app (it looks like an
+  embedded app browser to Google, which it blocks as an anti-phishing
+  measure). The app now tells you this with a clear message instead of
+  failing silently, and the fix is simple: open the site in **Safari**
+  (not the home screen icon) and tap "Sign in with Google" there. Your
+  plan data and sign-in are shared between Safari and the home screen
+  icon for the same site, so once you're signed in in Safari you can go
+  right back to using the home screen icon as usual — it'll show as
+  signed in there too.
 - **"This app is blocked" / "Access denied"** when signing in: your Google
   account isn't on the Test users list (step 3). Add it and try again.
 - **"Drive permission needed"** after signing in: you (or Google)
